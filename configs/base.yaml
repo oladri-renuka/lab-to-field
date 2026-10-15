@@ -15,8 +15,6 @@ paths:
 
 data:
   hf_id: mohanty/PlantVillage
-  hf_image_col: image
-  hf_label_col: label
   img_size: 224
   num_workers: 8
   val_frac: 0.2                # carved from PlantDoc train, stratified

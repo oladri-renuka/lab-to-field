@@ -1,6 +1,6 @@
 """Build all manifests from the raw datasets. Run once: `python -m src.data.prepare`.
 
-1. PlantVillage (HF, color + segmented): keep the HF splits (leaf-grouped), keep shared classes only.
+1. PlantVillage (HF repo data.zip, color + segmented): official leaf-grouped split lists, shared classes only.
 2. PlantDoc: map folders through configs/class_map.csv, drop unreadable files.
 3. Perceptual-hash dedup: drop PlantDoc-train images within Hamming <= d of any PlantDoc-test image.
 4. Carve a stratified 20% PlantDoc-val from PlantDoc-train (fixed split seed).
@@ -22,39 +22,60 @@ from src.data.splits import stratified_val_split
 from src.utils import load_config, save_json
 
 
-def export_plantvillage(cfg, config_name: str, wanted: dict[str, str], out_dir: Path) -> dict[str, pd.DataFrame]:
-    """Write raw image bytes for wanted classes to disk; return {split: frame with class_name}."""
-    from datasets import Image as HFImage, load_dataset
+def fetch_plantvillage(cfg, configs=("color", "segmented")) -> Path:
+    """Download data.zip + official split lists from the HF repo and extract only the needed configs.
 
-    ds = load_dataset(cfg.data.hf_id, config_name)
-    print(f"[plantvillage/{config_name}] splits: { {k: len(v) for k, v in ds.items()} }")
-    if "test" not in ds:
-        raise RuntimeError("PlantVillage HF dataset has no test split; refusing to make an ungrouped one")
+    The repo ships a loading script that `datasets` >= 4 no longer runs, so we read its files directly.
+    Returns the directory that contains `raw/<config>/<class>/<file>`.
+    """
+    import zipfile
+
+    from huggingface_hub import hf_hub_download
+
+    root = Path(cfg.paths.raw_dir) / "plantvillage"
+    done = root / ".extracted"
+    if not done.exists():
+        zpath = hf_hub_download(cfg.data.hf_id, "data.zip", repo_type="dataset")
+        prefixes = tuple(f"raw/{c}/" for c in configs)
+        with zipfile.ZipFile(zpath) as z:
+            members = [m for m in z.namelist() if not m.endswith("/") and any(p in m for p in prefixes)]
+            print(f"[plantvillage] extracting {len(members)} files from data.zip")
+            z.extractall(root, members)
+        done.touch()
+    # zip may or may not have a top-level folder above raw/
+    for base in (root, *[d for d in root.iterdir() if d.is_dir()]):
+        if (base / "raw" / "color").is_dir():
+            return base
+    raise RuntimeError(f"could not find raw/color under {root}")
+
+
+def export_plantvillage(cfg, config_name: str, wanted: dict[str, str], base: Path) -> dict[str, pd.DataFrame]:
+    """Manifests from the official leaf-grouped split lists (`splits/<config>_<split>.txt`)."""
+    from huggingface_hub import hf_hub_download
+
     frames = {}
-    for split, d in ds.items():
-        split_name = {"validation": "val"}.get(split, split)
-        feat = d.features[cfg.data.hf_label_col]
-        names = feat.names if hasattr(feat, "names") else None
-        d = d.cast_column(cfg.data.hf_image_col, HFImage(decode=False))
-        rows, seen = [], set()
-        for i, ex in enumerate(d):
-            raw = ex[cfg.data.hf_label_col]
-            name = names[raw] if names is not None else str(raw)
-            seen.add(name)
-            pv_class = wanted.get(normalize(name))
+    for split in ("train", "test"):
+        lst = Path(hf_hub_download(cfg.data.hf_id, f"splits/{config_name}_{split}.txt", repo_type="dataset"))
+        lines = [ln.strip() for ln in lst.read_text().splitlines() if ln.strip()]
+        rows, seen, missing = [], set(), 0
+        for rel in lines:
+            cls = rel.split("/")[2]  # raw/<config>/<class>/<file>
+            seen.add(cls)
+            pv_class = wanted.get(normalize(cls))
             if pv_class is None:
                 continue
-            img = ex[cfg.data.hf_image_col]
-            suffix = Path(img.get("path") or "x.jpg").suffix or ".jpg"
-            path = out_dir / config_name / split_name / normalize(pv_class) / f"{i:06d}{suffix}"
+            path = base / rel
             if not path.exists():
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(img["bytes"])
+                missing += 1
+                continue
             rows.append({"path": str(path), "class_name": pv_class, "source": f"pv_{config_name}"})
-        missing = set(wanted) - {normalize(n) for n in seen}
-        if missing:
-            raise RuntimeError(f"class map targets not found in HF labels: {sorted(missing)}")
-        frames[split_name] = pd.DataFrame(rows)
+        print(f"[plantvillage/{config_name}/{split}] listed={len(lines)} kept={len(rows)} missing_files={missing}")
+        if missing > 0.01 * max(1, len(rows)):
+            raise RuntimeError(f"{missing} listed files not found under {base}; extraction incomplete?")
+        absent = set(wanted) - {normalize(c) for c in seen}
+        if absent:
+            raise RuntimeError(f"class map targets not found in PlantVillage labels: {sorted(absent)}")
+        frames[split] = pd.DataFrame(rows)
     return frames
 
 
@@ -101,8 +122,9 @@ def main() -> None:
     wanted = {normalize(c): c for c in targets}
 
     pd_frames, _ = read_plantdoc(Path(cfg.paths.plantdoc_dir), plantdoc_lookup(cmap))
-    pv_color = export_plantvillage(cfg, "color", wanted, processed / "plantvillage")
-    pv_seg = export_plantvillage(cfg, "segmented", wanted, processed / "plantvillage")
+    pv_base = fetch_plantvillage(cfg)
+    pv_color = export_plantvillage(cfg, "color", wanted, pv_base)
+    pv_seg = export_plantvillage(cfg, "segmented", wanted, pv_base)
 
     # Label space: mapped classes present in PlantVillage train AND PlantDoc test.
     in_pv = set(pv_color["train"]["class_name"])
