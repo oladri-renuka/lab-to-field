@@ -1,0 +1,9 @@
+# Best of E1-E4 + E5 at k=10. Pick `init_experiment` by PlantDoc-VAL accuracy
+# (`python -m src.report --select`), never by test accuracy.
+_base_: e5_fewshot.yaml
+init_experiment: e2
+exp_id: e6_from_${init_experiment}
+data:
+  fewshot_k: 10
+train:
+  init_from: ${output_dir}/${init_experiment}/${model}/seed${seed}/best.pt

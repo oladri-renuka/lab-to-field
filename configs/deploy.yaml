@@ -1,0 +1,7 @@
+checkpoint: runs/e2/efficientnet_b0/seed0/best.pt   # set to the best EfficientNet-B0 run (by PlantDoc-val)
+export_dir: serve/artifacts
+opset: 17
+calibration_images: 500     # from PlantDoc *train split*
+calibration_seed: 0
+latency: {warmup: 50, iters: 500, threads: 4}
+app: {unsure_threshold: 0.5, top_k: 3}

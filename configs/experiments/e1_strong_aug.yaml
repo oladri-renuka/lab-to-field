@@ -1,0 +1,7 @@
+_base_: ../base.yaml
+exp_id: e1
+data:
+  train_sources: [pv_color]
+aug:
+  kind: strong
+  mixup: true

@@ -1,0 +1,5 @@
+# Reference: field data only, no lab images.
+_base_: ../base.yaml
+exp_id: e7
+data:
+  train_sources: [pd_train]

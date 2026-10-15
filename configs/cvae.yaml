@@ -1,0 +1,14 @@
+seed: 0
+output_dir: runs/cvae
+paths: {processed_dir: data/processed, generated_dir: data/generated}
+data: {img_size: 128, num_workers: 8, sources: [pv_color, pd_train]}
+model: {latent_dim: 128, channels: [32, 64, 128, 256, 256]}
+group_by: crop           # crop -> one CVAE per crop (class group); none -> one CVAE for all classes
+train:
+  epochs: 60
+  batch_size: 128
+  lr: 1.0e-3
+  beta: 1.0
+  kl_warmup_epochs: 10
+sample: {per_class: 500}
+logging: {backend: mlflow, project: crop-disease-lab2field}

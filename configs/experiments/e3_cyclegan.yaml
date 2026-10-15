@@ -1,0 +1,5 @@
+# Requires: python -m src.train_cyclegan && python -m src.generate cyclegan
+_base_: ../base.yaml
+exp_id: e3
+data:
+  train_sources: [pv_color, cyclegan]

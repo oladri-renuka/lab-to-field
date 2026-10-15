@@ -1,0 +1,5 @@
+# torchrun --nproc_per_node=N -m src.train --config configs/compute/ddp.yaml exp_id=ddp_ws$N
+# Per-GPU batch fixed at 128, so the global batch grows with N and lr scales linearly.
+_base_: ../experiments/e0_baseline.yaml
+exp_id: ddp
+model: resnet50

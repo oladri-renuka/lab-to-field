@@ -1,0 +1,17 @@
+seed: 0
+output_dir: runs/cyclegan
+paths: {processed_dir: data/processed, generated_dir: data/generated}
+data: {load_size: 286, crop_size: 256, num_workers: 8}
+model: {ngf: 64, ndf: 64, n_blocks: 9, n_layers_d: 3}
+train:
+  epochs: 100            # lr constant for the first half, linear decay to 0 over the second
+  decay_start: 50
+  batch_size: 1
+  lr: 2.0e-4
+  beta1: 0.5
+  lambda_cycle: 10.0
+  lambda_identity: 5.0
+  pool_size: 50
+  save_every: 10
+  sample_every: 1
+logging: {backend: mlflow, project: crop-disease-lab2field}

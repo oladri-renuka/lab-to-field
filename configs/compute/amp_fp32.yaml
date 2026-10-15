@@ -1,0 +1,4 @@
+# Run with model=resnet50 and model=vit_s16. Compare with amp_bf16.yaml.
+_base_: ../experiments/e0_baseline.yaml
+exp_id: compute_fp32
+train: {precision: fp32}

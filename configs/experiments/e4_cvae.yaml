@@ -1,0 +1,5 @@
+# Requires: python -m src.train_cvae && python -m src.generate cvae
+_base_: ../base.yaml
+exp_id: e4
+data:
+  train_sources: [pv_color, cvae]

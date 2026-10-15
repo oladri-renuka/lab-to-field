@@ -1,0 +1,12 @@
+[project]
+name = "crop-disease-lab2field"
+version = "0.1.0"
+description = "Closing the lab-to-field gap in crop disease detection with generative augmentation"
+requires-python = ">=3.10"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: end-to-end smoke test (~1 min on CPU)"]
+
+[tool.ruff]
+line-length = 120

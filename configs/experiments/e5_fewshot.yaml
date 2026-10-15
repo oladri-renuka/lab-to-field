@@ -1,0 +1,14 @@
+# Fine-tune the E0 checkpoint (same model, same seed) on k PlantDoc-train images per class.
+# Sweep k: data.fewshot_k=5 | 10 | 25
+_base_: ../base.yaml
+exp_id: e5_k${data.fewshot_k}
+data:
+  train_sources: [pd_fewshot]
+  fewshot_k: 10
+train:
+  init_from: ${output_dir}/e0/${model}/seed${seed}/best.pt
+  epochs: 30
+  warmup_epochs: 2
+  batch_size: 32
+  scale_lr: false
+  lr_mult: 0.3

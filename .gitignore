@@ -1,0 +1,10 @@
+data/
+runs/
+mlruns/
+wandb/
+serve/artifacts/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store

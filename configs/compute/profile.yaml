@@ -1,0 +1,4 @@
+_base_: ../experiments/e0_baseline.yaml
+exp_id: compute_profile
+train: {epochs: 1, warmup_epochs: 0}
+profile: {enabled: true}

@@ -1,0 +1,3 @@
+_base_: ../experiments/e0_baseline.yaml
+exp_id: compute_bf16
+train: {precision: bf16}
