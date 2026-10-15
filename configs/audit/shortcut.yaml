@@ -1,0 +1,17 @@
+# Background-only shortcut test: can a classifier predict the PlantVillage label from background alone?
+# Input = 4x4 tile of 32px patches sampled from leaf-free regions (leaf mask from the segmented config, dilated),
+# shuffled so no leaf silhouette or layout survives. Run 3 seeds: seed=0,1,2.
+_base_: ../base.yaml
+exp_id: shortcut
+model: efficientnet_b0
+output_dir: runs
+shortcut:
+  cell: 32
+  grid: 4            # tile = grid x grid patches
+  stride: 16
+  dilate: 9          # px; removes the leaf's edge halo from "background"
+  min_clean: 4       # if fewer leaf-free cells, fall back to the least-leafy cells with leaf pixels greyed out
+train:
+  epochs: 8
+  warmup_epochs: 1
+  batch_size: 128

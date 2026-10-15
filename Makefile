@@ -1,4 +1,4 @@
-.PHONY: setup data test smoke sweep compute generative report deploy app api docker
+.PHONY: setup data audit shortcut test smoke sweep compute generative report deploy app api docker
 PY ?= python
 
 setup:
@@ -7,6 +7,12 @@ setup:
 data:
 	bash scripts/download_data.sh
 	$(PY) -m src.data.prepare
+
+audit:
+	$(PY) -m src.data.audit
+
+shortcut:
+	for s in 0 1 2; do $(PY) -m src.shortcut --config configs/audit/shortcut.yaml seed=$$s; done
 
 test:
 	$(PY) -m pytest -q -m "not slow"

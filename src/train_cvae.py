@@ -14,11 +14,11 @@ from pathlib import Path
 import pandas as pd
 import torch
 from omegaconf import OmegaConf
-from PIL import Image
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import transforms as T
 from torchvision.utils import save_image
 
+from src.data.io import load_image
 from src.data.class_map import crop_of
 from src.data.datasets import read_manifest
 from src.models.cvae import ConditionalVAE, vae_loss
@@ -37,7 +37,7 @@ class CondDataset(Dataset):
 
     def __getitem__(self, i):
         r = self.df.iloc[i]
-        return self.t(Image.open(r.path).convert("RGB")), int(r.cond)
+        return self.t(load_image(r.path)), int(r.cond)
 
 
 def groups(classes: list[str], group_by: str) -> dict[str, list[str]]:

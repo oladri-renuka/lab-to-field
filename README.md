@@ -38,6 +38,24 @@ Rules enforced in `src/data/prepare.py`:
 - **Near-duplicates removed.** Any PlantDoc-train image within pHash Hamming distance ≤ 4 of a test image is dropped. The pairs are listed in `reports/dedup_plantdoc.csv`.
 - No TFDS. Its single ungrouped split leaks the same leaf across train and test.
 
+## Data audit (before any training)
+
+`make audit` writes `reports/audit/audit.md`. `make shortcut` runs the background-only test (3 seeds).
+
+| Check | Result |
+|---|---|
+| PlantVillage leaf grouping: leaf ids in both train and test | — |
+| PlantVillage images re-posted inside PlantDoc (removed, any split) | — |
+| PlantDoc train ↔ test near-duplicates (removed from train) | — |
+| Segmented-train leaves whose color version is in test (excluded from compositing) | — |
+| Estimated PlantDoc label error (manual review, 20 per class) | — |
+| **Background-only classifier, PlantVillage test acc** (chance 1/27 = 0.037) | — |
+
+![Background-only inputs](reports/figures/shortcut_examples.png)
+
+*Background-only input: a shuffled grid of patches from leaf-free regions (mask from the segmented config, dilated).
+No leaf pixels and no silhouette remain, so above-chance accuracy can only come from the background.*
+
 ## Baseline first
 
 **E0** fine-tunes ImageNet-pretrained models on PlantVillage with standard augmentation. This is the lab number everyone quotes, and it measures the raw gap.

@@ -10,17 +10,17 @@ from pathlib import Path
 
 import pandas as pd
 import torch
-from PIL import Image
 from torchvision import transforms as T
 from torchvision.utils import save_image
 
+from src.data.io import load_image
 from src.data.datasets import read_manifest
 from src.utils import load_config, save_json, seed_everything
 
 
 def load_batch(paths, size=299):
     tf = T.Compose([T.Resize((size, size)), T.ToTensor()])
-    return torch.stack([tf(Image.open(p).convert("RGB")) for p in paths])
+    return torch.stack([tf(load_image(p)) for p in paths])
 
 
 @torch.no_grad()

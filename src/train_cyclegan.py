@@ -19,6 +19,7 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms as T
 from torchvision.utils import save_image
 
+from src.data.io import load_image
 from src.data.datasets import read_manifest
 from src.models.cyclegan import ImagePool, PatchDiscriminator, ResnetGenerator, init_weights
 from src.utils import RunLogger, load_config, seed_everything, seed_worker
@@ -37,8 +38,8 @@ class UnalignedDataset(Dataset):
         return len(self.b)
 
     def __getitem__(self, i):
-        a = Image.open(random.choice(self.a)).convert("RGB")
-        b = Image.open(self.b[i]).convert("RGB")
+        a = load_image(random.choice(self.a))
+        b = load_image(self.b[i])
         return self.t(a), self.t(b)
 
 

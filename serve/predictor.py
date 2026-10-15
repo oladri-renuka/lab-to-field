@@ -8,12 +8,13 @@ from pathlib import Path
 
 import numpy as np
 import onnxruntime as ort
-from PIL import Image
+from PIL import Image, ImageOps
 
 ARTIFACTS = Path(os.environ.get("MODEL_DIR", Path(__file__).parent / "artifacts"))
 
 
 def preprocess(img: Image.Image, size: int, mean, std) -> np.ndarray:
+    img = ImageOps.exif_transpose(img)  # phone uploads carry EXIF rotation
     x = np.asarray(img.convert("RGB").resize((size, size), Image.BILINEAR), dtype=np.float32) / 255.0
     x = (x - np.asarray(mean, np.float32)) / np.asarray(std, np.float32)
     return x.transpose(2, 0, 1)[None]

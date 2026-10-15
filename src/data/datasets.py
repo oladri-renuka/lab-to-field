@@ -10,9 +10,9 @@ from pathlib import Path
 
 import pandas as pd
 from omegaconf import DictConfig
-from PIL import Image
 from torch.utils.data import ConcatDataset, Dataset
 
+from src.data.io import load_image
 from src.data.composite import composite, random_background
 from src.data.splits import few_shot
 
@@ -43,7 +43,7 @@ class ManifestDataset(Dataset):
         return len(self.paths)
 
     def __getitem__(self, i):
-        img = Image.open(self.paths[i]).convert("RGB")
+        img = load_image(self.paths[i])
         return (self.transform(img) if self.transform else img), self.labels[i]
 
 
@@ -64,8 +64,7 @@ class CompositeDataset(Dataset):
     def __getitem__(self, i):
         rng = random  # seeded per worker by src.utils.seed_worker
         leaf, label = self.leaves[i]
-        with Image.open(rng.choice(self.backgrounds)) as bg_src:
-            bg = random_background(bg_src.convert("RGB"), self.c.canvas, tuple(self.c.bg_crop_scale), rng)
+        bg = random_background(load_image(rng.choice(self.backgrounds)), self.c.canvas, tuple(self.c.bg_crop_scale), rng)
         img = composite(
             leaf, bg, rng,
             leaf_scale=tuple(self.c.leaf_scale), rotation=self.c.rotation,

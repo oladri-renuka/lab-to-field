@@ -10,10 +10,10 @@ from pathlib import Path
 
 import pandas as pd
 import torch
-from PIL import Image
 from torchvision import transforms as T
 from torchvision.utils import save_image
 
+from src.data.io import load_image
 from src.data.class_map import normalize
 from src.data.datasets import read_manifest
 from src.models.cvae import ConditionalVAE
@@ -32,7 +32,7 @@ def gen_cyclegan(cfg, dev, batch: int = 32) -> pd.DataFrame:
     rows = []
     for s in range(0, len(src), batch):
         chunk = src.iloc[s : s + batch]
-        x = torch.stack([tf(Image.open(p).convert("RGB")) for p in chunk.path]).to(dev)
+        x = torch.stack([tf(load_image(p)) for p in chunk.path]).to(dev)
         y = G(x) * 0.5 + 0.5
         for img, r in zip(y, chunk.itertuples()):
             path = out_dir / normalize(r.class_name) / f"{Path(r.path).stem}.jpg"

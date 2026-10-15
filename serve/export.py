@@ -18,9 +18,9 @@ import onnxruntime as ort
 import torch
 from onnxruntime.quantization import CalibrationDataReader, QuantFormat, QuantType, quantize_static
 from onnxruntime.quantization.shape_inference import quant_pre_process
-from PIL import Image
 
 from serve.predictor import preprocess
+from src.data.io import load_image
 from src.data.datasets import read_manifest
 from src.eval import load_checkpoint
 from src.models.classifier import norm_stats
@@ -37,7 +37,7 @@ class ImageReader(CalibrationDataReader):
         if p is None:
             return None
         name, size, mean, std = self.args
-        return {name: preprocess(Image.open(p), size, mean, std)}
+        return {name: preprocess(load_image(p), size, mean, std)}
 
 
 def latency_ms(session: ort.InferenceSession, x: np.ndarray, warmup: int, iters: int) -> tuple[float, float]:
@@ -54,7 +54,7 @@ def latency_ms(session: ort.InferenceSession, x: np.ndarray, warmup: int, iters:
 
 def accuracy(session, paths, labels, size, mean, std) -> float:
     name = session.get_inputs()[0].name
-    preds = [int(session.run(None, {name: preprocess(Image.open(p), size, mean, std)})[0].argmax()) for p in paths]
+    preds = [int(session.run(None, {name: preprocess(load_image(p), size, mean, std)})[0].argmax()) for p in paths]
     return float((np.asarray(preds) == np.asarray(labels)).mean())
 
 
@@ -98,7 +98,7 @@ def main() -> None:
         report[tag] = {"pd_test_acc": accuracy(sess, test.path, test.label, size, mean, std),
                        "size_mb": path.stat().st_size / 2**20, "latency_p50_ms": p50, "latency_p95_ms": p95}
     save_json(report, "reports/deploy.json")
-    md = (f"| Model | PlantDoc acc | Size (MB) | p50 (ms) | p95 (ms) |\n|---|---|---|---|---|\n"
+    md = ("| Model | PlantDoc acc | Size (MB) | p50 (ms) | p95 (ms) |\n|---|---|---|---|---|\n"
           + "".join(f"| EfficientNet-B0 {t.upper()} | {report[t]['pd_test_acc']:.3f} | {report[t]['size_mb']:.1f} | "
                     f"{report[t]['latency_p50_ms']:.1f} | {report[t]['latency_p95_ms']:.1f} |\n" for t in ("fp32", "int8"))
           + f"\nCPU: {report['cpu']}, {report['threads']} threads, batch 1, onnxruntime {report['onnxruntime']}.\n")

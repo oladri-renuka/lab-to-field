@@ -18,6 +18,7 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 
+from src.data.io import load_image
 from src.data.datasets import read_manifest
 from src.data.transforms import eval_transform
 from src.eval import load_checkpoint
@@ -96,7 +97,7 @@ def main() -> None:
     images = fixed_images(cfg, args.n)
     fig, axes = plt.subplots(len(images), len(loaded) + 1, figsize=(2.4 * (len(loaded) + 1), 2.4 * len(images)))
     for r, (path, label) in enumerate(images):
-        img = Image.open(path).convert("RGB")
+        img = load_image(path)
         axes[r, 0].imshow(img.resize((224, 224)))
         axes[r, 0].set_title(classes[label].replace("___", "\n"), fontsize=6)
         for c, (model, mcfg, _) in enumerate(loaded, start=1):

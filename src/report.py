@@ -23,6 +23,8 @@ def collect(runs: Path) -> pd.DataFrame:
     rows = []
     for f in sorted(runs.glob("*/*/seed*/metrics.json")):
         m = json.loads(f.read_text())
+        if "pd_test" not in m:  # e.g. the background-only shortcut run
+            continue
         rows.append({
             "exp": m["exp_id"], "model": m["model"], "seed": m["seed"], "pd_val_acc": m["pd_val_acc"],
             "pd_acc": m["pd_test"]["acc"], "pd_macro_f1": m["pd_test"]["macro_f1"], "pd_ece": m["pd_test"]["ece"],
