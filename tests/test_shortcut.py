@@ -30,3 +30,14 @@ def test_background_tile_when_leaf_fills_frame():
     color = np.full((256, 256, 3), (0, 255, 0), np.uint8)
     tile = np.asarray(background_tile(Image.fromarray(color), Image.fromarray(color), SC, random.Random(0)))
     assert (tile == 128).all()  # leaf greyed out, never leaked
+
+
+def test_pair_index_falls_back_to_unique_suffix():
+    from src.data.prepare import PairIndex
+
+    seg = ["raw/segmented/Corn_(maize)___Common_rust_/00b29f2a-uuid___RS_Rust 1566_final_masked.jpg",
+           "raw/segmented/Corn_(maize)___Common_rust_/aaaa___RS_Rust 1567_final_masked.jpg",
+           "raw/segmented/Corn_(maize)___Common_rust_/bbbb___RS_Rust 1567_final_masked.jpg"]
+    idx = PairIndex(seg)
+    assert idx.get("raw/color/Corn_(maize)___Common_rust_/RS_Rust 1566.JPG") == seg[0]
+    assert idx.get("raw/color/Corn_(maize)___Common_rust_/RS_Rust 1567.JPG") is None  # ambiguous -> no pairing

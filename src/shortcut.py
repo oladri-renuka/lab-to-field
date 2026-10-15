@@ -24,7 +24,7 @@ from torchvision import transforms as T
 from src.data.composite import leaf_mask
 from src.data.datasets import read_manifest
 from src.data.io import load_image
-from src.data.prepare import leaf_key, split_list
+from src.data.prepare import PairIndex, split_list
 from src.eval import predict
 from src.metrics import classification_metrics
 from src.models.classifier import build_classifier, norm_stats
@@ -34,11 +34,11 @@ from src.utils import RunLogger, load_classes, load_config, run_dir, save_json, 
 
 def attach_segmented(cfg, df: pd.DataFrame) -> pd.DataFrame:
     """Add `seg_path` (segmented counterpart, any split) to color manifest rows; drop rows without one."""
-    seg_index = {leaf_key(r): r for s in ("train", "test") for r in split_list(cfg, "segmented", s)}
+    seg_index = PairIndex(r for s in ("train", "test") for r in split_list(cfg, "segmented", s))
     out = []
     for r in df.itertuples():
         base, rel = r.path.split("/raw/", 1)
-        seg_rel = seg_index.get(leaf_key("raw/" + rel))
+        seg_rel = seg_index.get("raw/" + rel)
         if seg_rel and Path(base, seg_rel).exists():
             out.append({**r._asdict(), "seg_path": str(Path(base, seg_rel))})
     return pd.DataFrame(out).drop(columns="Index")

@@ -64,7 +64,31 @@ def split_list(cfg, config_name: str, split: str) -> list[str]:
 def leaf_key(rel: str) -> tuple[str, str]:
     """(class, stem) shared by a color image and its segmented version: raw/<config>/<class>/<file>."""
     parts = rel.split("/")
-    return normalize(parts[2]), Path(parts[3]).stem.lower().replace(SEG_SUFFIX, "")
+    return normalize(parts[2]), Path(parts[3]).stem.lower().replace(SEG_SUFFIX.lower(), "")
+
+
+def _short_key(rel: str) -> tuple[str, str]:
+    cls, stem = leaf_key(rel)
+    return cls, stem.split("___")[-1].strip()
+
+
+class PairIndex:
+    """Look up the counterpart of an image in the other config (color <-> segmented).
+
+    Exact (class, stem) match first; otherwise the part after the last '___', used only when unique in the class.
+    Needed because e.g. color `Corn___Common_rust_/RS_Rust 1563.JPG` is `<uuid>___RS_Rust 1563_final_masked.jpg`.
+    """
+
+    def __init__(self, rels):
+        rels = list(rels)
+        self.exact = {leaf_key(r): r for r in rels}
+        groups: dict[tuple[str, str], list[str]] = {}
+        for r in rels:
+            groups.setdefault(_short_key(r), []).append(r)
+        self.short = {k: v[0] for k, v in groups.items() if len(v) == 1}
+
+    def get(self, rel: str) -> str | None:
+        return self.exact.get(leaf_key(rel)) or self.short.get(_short_key(rel))
 
 
 def plantvillage_frames(cfg, base: Path, wanted: dict[str, str]) -> tuple[dict[str, pd.DataFrame], pd.DataFrame, dict]:
@@ -88,14 +112,15 @@ def plantvillage_frames(cfg, base: Path, wanted: dict[str, str]) -> tuple[dict[s
     if absent:
         raise RuntimeError(f"class map targets not found in PlantVillage labels: {sorted(absent)}")
 
-    seg_index = {leaf_key(rel): rel for lines in seg.values() for rel in lines}
-    color_split = {leaf_key(r): s for s, lines in color.items() for r in lines}
+    seg_index = PairIndex(r for lines in seg.values() for r in lines)
+    color_index = PairIndex(r for lines in color.values() for r in lines)
+    color_split = {r: s for s, lines in color.items() for r in lines}
     shared = all_color[all_color.class_name.notna()]
     out = {s: shared[shared.split == s][["path", "class_name"]].assign(source="pv_color") for s in ("train", "test")}
 
     seg_rows = []
     for r in shared[shared.split == "train"].itertuples():
-        rel = seg_index.get(leaf_key(r.rel))
+        rel = seg_index.get(r.rel)
         if rel and (base / rel).exists():
             seg_rows.append({"path": str(base / rel), "class_name": r.class_name, "source": "pv_segmented",
                              "color_path": r.path})
@@ -105,9 +130,9 @@ def plantvillage_frames(cfg, base: Path, wanted: dict[str, str]) -> tuple[dict[s
         "color_train_shared": len(out["train"]),
         "color_train_with_segmented": len(seg_rows),
         "segmented_total": sum(len(v) for v in seg.values()),
-        "segmented_without_color": sum(k not in color_split for k in seg_index),
+        "segmented_without_color": sum(color_index.get(r) is None for lines in seg.values() for r in lines),
         # leak the naive pipeline would have: segmented-train items whose color version is in color-test
-        "segmented_train_listed_but_color_test": sum(color_split.get(leaf_key(r)) == "test" for r in seg["train"]),
+        "segmented_train_listed_but_color_test": sum(color_split.get(color_index.get(r)) == "test" for r in seg["train"]),
     }
     print(f"[plantvillage] shared-class color train={len(out['train'])} test={len(out['test'])}; "
           f"compositing leaves={len(seg_rows)}; segmented-train items with color in test (excluded)="
@@ -173,6 +198,21 @@ def main() -> None:
                         pv_hash=pv_hash, pd_path=plantdoc.path.to_numpy(dtype=str),
                         pd_split=plantdoc.split.to_numpy(dtype=str), pd_hash=pd_hash)
 
+    # PlantVillage test images near-identical to a PlantVillage train image (e.g. "... copy.jpg" duplicates
+    # without a leaf id): removed from test so lab accuracy is not inflated.
+    is_tr = (all_color.split == "train").to_numpy()
+    te_idx, tr_idx = np.flatnonzero(~is_tr), np.flatnonzero(is_tr)
+    pv_leak = [(te_idx[i], tr_idx[j], dist)
+               for i, j, dist in matches(pv_hash[~is_tr], pv_hash[is_tr], d)]
+    pd.DataFrame([{"test_path": all_color.path.iloc[i], "train_path": all_color.path.iloc[j], "hamming": dist}
+                  for i, j, dist in pv_leak],
+                 columns=["test_path", "train_path", "hamming"]).to_csv(reports / "pv_test_near_dup_train.csv", index=False)
+    leaked = {all_color.path.iloc[i] for i, _, _ in pv_leak}
+    n_before = len(pv["test"])
+    pv["test"] = pv["test"][~pv["test"].path.isin(leaked)]
+    print(f"[pv-dedup] PlantVillage test images near-identical to a train image (hamming <= {d}): {len(pv_leak)} "
+          f"(all classes); removed from shared-class test: {n_before - len(pv['test'])}")
+
     # 3. PlantVillage photos re-posted inside PlantDoc (any PlantDoc split, any PlantVillage class)
     contam = matches(pd_hash, pv_hash, d)
     contam_df = pd.DataFrame([{"plantdoc_path": plantdoc.path.iloc[i], "plantdoc_split": plantdoc.split.iloc[i],
@@ -224,6 +264,7 @@ def main() -> None:
 
     save_json({"classes": classes, "dropped": dropped}, processed / "classes.json")
     save_json({**seg_stats, "contaminated_removed": len(contam), "near_duplicates_removed": len(dups),
+               "pv_test_near_dup_removed": n_before - len(pv["test"]),
                "unreadable": len(bad)}, processed / "prepare_stats.json")
     counts = (pd.DataFrame({name: df["class_name"].value_counts() for name, df in out.items()})
               .reindex(classes).fillna(0).astype(int))
@@ -232,6 +273,8 @@ def main() -> None:
         f"- PlantDoc images matching a PlantVillage image, removed: **{len(contam)}** "
         f"(`reports/contamination_plantvillage_in_plantdoc.csv`)\n"
         f"- PlantDoc-train near-duplicates of test, removed: **{len(dups)}** (`reports/dedup_plantdoc.csv`)\n"
+        f"- PlantVillage test images near-identical to a train image, removed from test: "
+        f"**{n_before - len(pv['test'])}** (`reports/pv_test_near_dup_train.csv`)\n"
         f"- Unreadable PlantDoc files skipped: **{len(bad)}**\n"
         f"- Compositing leaves, color-train only: **{seg_stats['color_train_with_segmented']}** "
         f"(segmented-train items whose color version is in test, excluded: "
