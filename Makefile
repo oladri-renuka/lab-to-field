@@ -12,7 +12,7 @@ audit:
 	$(PY) -m src.data.audit
 
 shortcut:
-	for s in 0 1 2; do $(PY) -m src.shortcut --config configs/audit/shortcut.yaml seed=$$s; done
+	for s in 0 1 2; do $(PY) -m src.shortcut --config configs/audit/shortcut.yaml seed=$$s || exit 1; done
 
 test:
 	$(PY) -m pytest -q -m "not slow"

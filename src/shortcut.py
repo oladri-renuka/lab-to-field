@@ -35,13 +35,14 @@ from src.utils import RunLogger, load_classes, load_config, run_dir, save_json, 
 def attach_segmented(cfg, df: pd.DataFrame) -> pd.DataFrame:
     """Add `seg_path` (segmented counterpart, any split) to color manifest rows; drop rows without one."""
     seg_index = PairIndex(r for s in ("train", "test") for r in split_list(cfg, "segmented", s))
-    out = []
-    for r in df.itertuples():
-        base, rel = r.path.split("/raw/", 1)
+
+    def lookup(path: str) -> str | None:
+        base, rel = path.split("/raw/", 1)
         seg_rel = seg_index.get("raw/" + rel)
-        if seg_rel and Path(base, seg_rel).exists():
-            out.append({**r._asdict(), "seg_path": str(Path(base, seg_rel))})
-    return pd.DataFrame(out).drop(columns="Index")
+        return str(Path(base, seg_rel)) if seg_rel and Path(base, seg_rel).exists() else None
+
+    df = df.assign(seg_path=[lookup(p) for p in df.path])
+    return df[df.seg_path.notna()].reset_index(drop=True)
 
 
 def background_tile(color: Image.Image, seg: Image.Image, sc, rng: random.Random) -> Image.Image:
