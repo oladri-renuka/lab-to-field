@@ -74,7 +74,7 @@ def section_leaf(cfg) -> str:
     n_img_test_shared = int(real["test"].isin(shared).sum())
     fallback = {s: float(v.str.startswith("fallback_").mean()) for s, v in ids.items()}
 
-    h = np.load(Path(cfg.paths.processed_dir) / "hashes.npz", allow_pickle=False)
+    h = np.load(Path(cfg.paths.processed_dir) / "hashes.npz", allow_pickle=True)  # our own file
     tr, te = h["pv_split"] == "train", h["pv_split"] == "test"
     _, dist = nearest(h["pv_hash"][te], h["pv_hash"][tr])
     fig, ax = plt.subplots(figsize=(5, 3))
@@ -133,7 +133,7 @@ def _inspect(path: str) -> dict:
 
 
 def section_files(cfg, workers: int) -> str:
-    h = np.load(Path(cfg.paths.processed_dir) / "hashes.npz", allow_pickle=False)
+    h = np.load(Path(cfg.paths.processed_dir) / "hashes.npz", allow_pickle=True)  # our own file
     pd_root = Path(cfg.paths.plantdoc_dir)
     pd_all = sorted(str(p) for p in pd_root.rglob("*") if p.is_file() and not p.name.startswith(".") and ".git" not in p.parts)
     seg = pd.read_csv(Path(cfg.paths.processed_dir) / "manifests" / "pv_seg_train.csv").path.tolist()

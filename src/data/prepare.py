@@ -168,10 +168,10 @@ def main() -> None:
           f"({args.workers} workers)")
     pv_hash = phash(all_color.path.tolist(), args.workers)
     pd_hash = phash(plantdoc.path.tolist(), args.workers)
-    np.savez_compressed(processed / "hashes.npz", pv_path=all_color.path.values.astype(str),
-                        pv_split=all_color.split.values.astype(str), pv_label=all_color.pv_label.values.astype(str),
-                        pv_hash=pv_hash, pd_path=plantdoc.path.values.astype(str),
-                        pd_split=plantdoc.split.values.astype(str), pd_hash=pd_hash)
+    np.savez_compressed(processed / "hashes.npz", pv_path=all_color.path.to_numpy(dtype=str),
+                        pv_split=all_color.split.to_numpy(dtype=str), pv_label=all_color.pv_label.to_numpy(dtype=str),
+                        pv_hash=pv_hash, pd_path=plantdoc.path.to_numpy(dtype=str),
+                        pd_split=plantdoc.split.to_numpy(dtype=str), pd_hash=pd_hash)
 
     # 3. PlantVillage photos re-posted inside PlantDoc (any PlantDoc split, any PlantVillage class)
     contam = matches(pd_hash, pv_hash, d)
