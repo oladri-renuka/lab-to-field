@@ -37,12 +37,15 @@ def attach_segmented(cfg, df: pd.DataFrame) -> pd.DataFrame:
     seg_index = PairIndex(r for s in ("train", "test") for r in split_list(cfg, "segmented", s))
 
     def lookup(path: str) -> str | None:
-        base, rel = path.split("/raw/", 1)
+        base, rel = path.rsplit("/raw/", 1)  # paths look like data/raw/plantvillage/raw/color/<class>/<file>
         seg_rel = seg_index.get("raw/" + rel)
         return str(Path(base, seg_rel)) if seg_rel and Path(base, seg_rel).exists() else None
 
     df = df.assign(seg_path=[lookup(p) for p in df.path])
-    return df[df.seg_path.notna()].reset_index(drop=True)
+    paired = df[df.seg_path.notna()].reset_index(drop=True)
+    if len(paired) < 0.9 * len(df):
+        raise RuntimeError(f"only {len(paired)}/{len(df)} images paired with a segmented mask; e.g. {df.path.iloc[0]}")
+    return paired
 
 
 def background_tile(color: Image.Image, seg: Image.Image, sc, rng: random.Random) -> Image.Image:
