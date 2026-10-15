@@ -73,7 +73,7 @@ class RunLogger:
         if self.backend == "mlflow":
             import mlflow
 
-            mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "file:./mlruns"))
+            mlflow.set_tracking_uri(os.environ.get("MLFLOW_TRACKING_URI", "sqlite:///mlflow.db"))
             mlflow.set_experiment(cfg.logging.project)
             mlflow.start_run(run_name=name)
             flat = {k: str(v)[:250] for k, v in _flatten(params).items()}

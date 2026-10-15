@@ -1,6 +1,8 @@
 /data/
 /runs/
 /mlruns/
+/mlflow.db
+/mlartifacts/
 /wandb/
 serve/artifacts/
 __pycache__/

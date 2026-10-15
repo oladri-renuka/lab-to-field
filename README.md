@@ -132,7 +132,7 @@ A FastAPI service with a Dockerfile is in `serve/`.
 
 - Every run is launched from a YAML config (`configs/`) plus CLI overrides. The resolved config is saved next to the checkpoint (`runs/<exp>/<model>/seed<k>/config.yaml`).
 - Seeds are fixed: Python, NumPy, torch and DataLoader workers. The PlantDoc-val split uses its own fixed seed, so it's the same for all runs. Few-shot draws vary with the training seed.
-- Runs log to MLflow (`mlruns/`, `mlflow ui`). Switch to W&B with `logging.backend=wandb`.
+- Runs log to MLflow (`mlflow.db`; view with `mlflow ui --backend-store-uri sqlite:///mlflow.db`). Switch to W&B with `logging.backend=wandb`.
 - `pytest` covers metrics, splits, the class map, configs, model shapes and sizes, compositing, dedup, and an end-to-end CPU smoke test (train → eval → fine-tune → report) on synthetic images.
 
 ## Design decisions and deviations from the brief
