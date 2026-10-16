@@ -1,7 +1,11 @@
-"""One-time cache for background compositing (E2), so per-sample work is just paste + augment.
+"""One-time image caches so per-sample work in training is cheap.
+
+Compositing (E2):
 
 - repaired leaf masks (from the segmented images) -> small PNGs, keyed by threshold/repair settings
 - background source images (PlantDoc train, ~800 px) -> downsized to `bg_max_side` JPEGs
+CVAE: every training image downsized to the CVAE resolution (PlantDoc photos are several megapixels;
+decoding them per sample made one CVAE epoch take minutes).
 Files are written atomically and reused across runs; only missing ones are computed.
 """
 from __future__ import annotations
@@ -71,4 +75,21 @@ def cached_backgrounds(paths: list[str], cache_root: Path, max_side: int, worker
     if todo:
         print(f"[composite-cache] downsizing {len(todo)} background images -> {d}", flush=True)
     _run(_make_bg, todo, "cache backgrounds", workers)
+    return outs
+
+
+def _make_resized(args) -> None:
+    src, out, size = args
+    _atomic_save(load_image(src).resize((size, size), Image.BICUBIC), Path(out), format="PNG")
+
+
+def cached_resized(paths: list[str], cache_root: Path, size: int, workers: int) -> list[str]:
+    """Square-resized PNG copies (exactly what the CVAE consumes), keyed by source path."""
+    d = cache_root / f"resized_{size}"
+    d.mkdir(parents=True, exist_ok=True)
+    outs = [str(d / f"{_key(p)}.png") for p in paths]
+    todo = [(p, o, size) for p, o in zip(paths, outs) if not Path(o).exists()]
+    if todo:
+        print(f"[image-cache] resizing {len(todo)} images to {size}x{size} -> {d}", flush=True)
+    _run(_make_resized, todo, f"cache {size}px images", workers)
     return outs

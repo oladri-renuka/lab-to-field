@@ -1,7 +1,9 @@
 seed: 0
 output_dir: runs/cvae
 paths: {processed_dir: data/processed, generated_dir: data/generated}
-data: {img_size: 128, num_workers: 8, sources: [pv_color, pd_train]}
+# num_workers 0: forked loader workers hung before the first batch on the RunPod image; images are pre-resized
+# to 128 px once (cache_workers processes), so the main process loads them fast enough.
+data: {img_size: 128, num_workers: 0, cache_workers: 8, sources: [pv_color, pd_train]}
 model: {latent_dim: 128, channels: [32, 64, 128, 256, 256]}
 group_by: crop           # crop -> one CVAE per crop (class group); none -> one CVAE for all classes
 train:

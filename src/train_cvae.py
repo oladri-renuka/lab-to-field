@@ -20,6 +20,7 @@ from torchvision.utils import save_image
 
 from src.data.io import load_image
 from src.data.class_map import crop_of
+from src.data.composite_cache import cached_resized
 from src.data.datasets import read_manifest
 from src.models.cvae import ConditionalVAE, vae_loss
 from src.utils import RunLogger, Steps, load_classes, load_config, progress, seed_everything, seed_worker
@@ -31,9 +32,8 @@ class CondDataset(Dataset):
     """Plain Python lists, not a DataFrame: forked loader workers must not touch pandas/Arrow objects
     (that deadlocked the first CVAE run before its first batch)."""
 
-    def __init__(self, df: pd.DataFrame, size: int):
-        self.paths = [str(p) for p in df["path"]]
-        self.conds = [int(c) for c in df["cond"]]
+    def __init__(self, paths: list[str], conds: list[int], size: int):
+        self.paths, self.conds = list(paths), [int(c) for c in conds]
         self.t = T.Compose([T.Resize((size, size)), T.RandomHorizontalFlip(), T.ToTensor()])
 
     def __len__(self):
@@ -75,14 +75,22 @@ def main() -> None:
     out = Path(cfg.output_dir)
 
     grouped = groups(classes, cfg.group_by)
+    frames = {g: group_frame(cfg, m) for g, m in grouped.items()}
+    # Resize every image once, up front: before any CUDA work, so the cache's worker processes never fork a
+    # CUDA-initialised parent.
+    all_paths = sorted({p for df in frames.values() for p in df["path"]})
+    cache = dict(zip(all_paths, cached_resized(all_paths, Path(cfg.paths.processed_dir) / "image_cache",
+                                               int(cfg.data.img_size), int(cfg.data.cache_workers))))
     step = Steps("cvae", len(grouped))
     for gname, members in grouped.items():
         seed_everything(cfg.seed)
-        df = group_frame(cfg, members)
+        df = frames[gname]
         dom_counts = df.domain.value_counts()
         weights = torch.tensor([1.0 / dom_counts[d] for d in df.domain], dtype=torch.double)
         sampler = WeightedRandomSampler(weights, num_samples=len(df), replacement=True)
-        loader = DataLoader(CondDataset(df, cfg.data.img_size), batch_size=cfg.train.batch_size, sampler=sampler,
+        loader = DataLoader(CondDataset([cache[p] for p in df["path"]], df["cond"].tolist(), cfg.data.img_size),
+                            batch_size=cfg.train.batch_size,
+                            sampler=sampler,
                             num_workers=cfg.data.num_workers, worker_init_fn=seed_worker, drop_last=len(df) > cfg.train.batch_size)
         model = ConditionalVAE(2 * len(members), cfg.model.latent_dim, tuple(cfg.model.channels), cfg.data.img_size).to(dev)
         opt = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
