@@ -28,16 +28,19 @@ DOMAINS = {"pv_train": 0, "pd_train": 1}  # 0 = lab, 1 = field
 
 
 class CondDataset(Dataset):
+    """Plain Python lists, not a DataFrame: forked loader workers must not touch pandas/Arrow objects
+    (that deadlocked the first CVAE run before its first batch)."""
+
     def __init__(self, df: pd.DataFrame, size: int):
-        self.df = df.reset_index(drop=True)
+        self.paths = [str(p) for p in df["path"]]
+        self.conds = [int(c) for c in df["cond"]]
         self.t = T.Compose([T.Resize((size, size)), T.RandomHorizontalFlip(), T.ToTensor()])
 
     def __len__(self):
-        return len(self.df)
+        return len(self.paths)
 
     def __getitem__(self, i):
-        r = self.df.iloc[i]
-        return self.t(load_image(r.path)), int(r.cond)
+        return self.t(load_image(self.paths[i])), self.conds[i]
 
 
 def groups(classes: list[str], group_by: str) -> dict[str, list[str]]:
@@ -77,8 +80,8 @@ def main() -> None:
         seed_everything(cfg.seed)
         df = group_frame(cfg, members)
         dom_counts = df.domain.value_counts()
-        weights = df.domain.map(lambda d: 1.0 / dom_counts[d]).values
-        sampler = WeightedRandomSampler(torch.as_tensor(weights, dtype=torch.double), num_samples=len(df), replacement=True)
+        weights = torch.tensor([1.0 / dom_counts[d] for d in df.domain], dtype=torch.double)
+        sampler = WeightedRandomSampler(weights, num_samples=len(df), replacement=True)
         loader = DataLoader(CondDataset(df, cfg.data.img_size), batch_size=cfg.train.batch_size, sampler=sampler,
                             num_workers=cfg.data.num_workers, worker_init_fn=seed_worker, drop_last=len(df) > cfg.train.batch_size)
         model = ConditionalVAE(2 * len(members), cfg.model.latent_dim, tuple(cfg.model.channels), cfg.data.img_size).to(dev)
