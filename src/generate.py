@@ -18,7 +18,7 @@ from src.data.class_map import normalize
 from src.data.datasets import read_manifest
 from src.models.cvae import ConditionalVAE
 from src.models.cyclegan import ResnetGenerator
-from src.utils import load_classes, load_config, seed_everything
+from src.utils import load_classes, load_config, progress, seed_everything
 
 
 @torch.no_grad()
@@ -30,7 +30,7 @@ def gen_cyclegan(cfg, dev, batch: int = 32) -> pd.DataFrame:
     src = read_manifest(cfg, "pv_train")
     out_dir = Path(cfg.paths.generated_dir) / "cyclegan"
     rows = []
-    for s in range(0, len(src), batch):
+    for s in progress(range(0, len(src), batch), "translate PlantVillage -> field", unit="batch"):
         chunk = src.iloc[s : s + batch]
         x = torch.stack([tf(load_image(p)) for p in chunk.path]).to(dev)
         y = G(x) * 0.5 + 0.5
@@ -48,12 +48,15 @@ def gen_cvae(cfg, dev) -> pd.DataFrame:
     idx = {c: i for i, c in enumerate(classes)}
     out_dir = Path(cfg.paths.generated_dir) / "cvae"
     rows = []
-    for ckpt_path in sorted(Path(cfg.output_dir).glob("*/cvae.pt")):
+    ckpts = sorted(Path(cfg.output_dir).glob("*/cvae.pt"))
+    if not ckpts:
+        raise FileNotFoundError(f"no */cvae.pt under {cfg.output_dir}; run src.train_cvae first")
+    for ckpt_path in ckpts:
         ckpt = torch.load(ckpt_path, map_location=dev, weights_only=False)
         members = ckpt["members"]
         model = ConditionalVAE(2 * len(members), cfg.model.latent_dim, tuple(cfg.model.channels), cfg.data.img_size).to(dev).eval()
         model.load_state_dict(ckpt["model"])
-        for local, cls in enumerate(members):
+        for local, cls in enumerate(progress(members, f"sample {ckpt_path.parent.name}", unit="class")):
             y = torch.full((cfg.sample.per_class,), local * 2 + 1, device=dev)  # field domain
             for j, img in enumerate(model.sample(y)):
                 path = out_dir / normalize(cls) / f"{j:04d}.png"
@@ -72,6 +75,7 @@ def main() -> None:
     cfg = load_config(args.config or f"configs/{args.kind}.yaml", args.overrides)
     seed_everything(cfg.seed)
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[generate/{args.kind}] start", flush=True)
     df = gen_cyclegan(cfg, dev) if args.kind == "cyclegan" else gen_cvae(cfg, dev)
     path = Path(cfg.paths.generated_dir) / args.kind / "manifest.csv"
     path.parent.mkdir(parents=True, exist_ok=True)

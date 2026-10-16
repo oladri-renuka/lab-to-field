@@ -32,7 +32,7 @@ from src.data.composite import binary_leaf_mask
 from src.data.dedup import nearest
 from src.data.io import load_image
 from src.metrics import bootstrap_accuracy_ci
-from src.utils import load_config
+from src.utils import Steps, load_config, progress
 
 OUT = Path("reports/audit")
 SECTIONS = ["leaf", "counts", "files", "stats", "seg", "labels"]
@@ -141,7 +141,8 @@ def section_files(cfg, workers: int) -> str:
     tables, frames = [], {}
     with ProcessPoolExecutor(workers) as ex:
         for name, paths in groups.items():
-            df = pd.DataFrame(list(ex.map(_inspect, paths, chunksize=256)))
+            df = pd.DataFrame(list(progress(ex.map(_inspect, paths, chunksize=256), f"verify {name}",
+                                            total=len(paths), unit="file")))
             frames[name] = df
             df.to_csv(OUT / f"files_{name}.csv", index=False)
             good = df[df.ok]
@@ -198,7 +199,8 @@ def section_stats(cfg, workers: int, n: int = 2000) -> str:
     with ProcessPoolExecutor(workers) as ex:
         for name, df in sets.items():
             paths = df.sample(n=min(n, len(df)), random_state=0).path.tolist()
-            frames[name] = pd.DataFrame(list(ex.map(_pixel_stats, paths, chunksize=64)))
+            frames[name] = pd.DataFrame(list(progress(ex.map(_pixel_stats, paths, chunksize=64), f"stats {name}",
+                                                      total=len(paths), unit="img")))
     cols = ["r", "g", "b", "r_std", "g_std", "b_std", "brightness", "saturation", "blur_lapvar"]
     table = pd.DataFrame({k: {c: f"{v[c].mean():.3f} ± {v[c].std():.3f}" for c in cols} for k, v in frames.items()}).T
     table.insert(0, "n", [len(v) for v in frames.values()])
@@ -261,7 +263,8 @@ def section_seg(cfg, workers: int, n: int = 3000) -> str:
     sample = seg.sample(n=min(n, len(seg)), random_state=0)
     with ProcessPoolExecutor(workers) as ex:
         args = [(a, b, int(cfg.composite.mask_repair)) for a, b in zip(sample.path, sample.color_path)]
-        q = pd.DataFrame(list(ex.map(_mask_quality, args, chunksize=64)))
+        q = pd.DataFrame(list(progress(ex.map(_mask_quality, args, chunksize=64), "mask quality", total=len(args),
+                                       unit="leaf")))
     q.to_csv(OUT / "segmented_mask_quality.csv", index=False)
     ok = q[~q.size_mismatch]
     flags = {
@@ -329,7 +332,7 @@ def section_labels(cfg) -> str:
     for dataset, df, k in (("plantdoc", pdoc, 20), ("plantvillage", m["pv_train"], 10)):
         d = OUT / "labels" / dataset
         d.mkdir(parents=True, exist_ok=True)
-        for cls, g in df.groupby("class_name"):
+        for cls, g in progress(df.groupby("class_name"), f"contact sheets {dataset}", total=df.class_name.nunique()):
             pick = g.sample(n=min(k, len(g)), random_state=0).path.tolist()
             _sheet(pick, f"{dataset}: {cls}  (mark wrong tiles in label_review.csv)", d / f"{cls.replace(' ', '_')}.jpg")
             rows += [{"dataset": dataset, "class_name": cls, "tile": i, "path": p, "correct": ""} for i, p in enumerate(pick)]
@@ -377,14 +380,18 @@ def main() -> None:
     run = {"leaf": lambda: section_leaf(cfg), "counts": lambda: section_counts(cfg),
            "files": lambda: section_files(cfg, args.workers), "stats": lambda: section_stats(cfg, args.workers),
            "seg": lambda: section_seg(cfg, args.workers), "labels": lambda: section_labels(cfg)}
+    what = {"leaf": "PlantVillage leaf grouping (leaf ids + pHash)", "counts": "class counts",
+            "files": "verifying every file (formats, modes, EXIF, sizes)", "stats": "lab vs field pixel statistics",
+            "seg": "segmented masks (pairing, quality, lesion repair)", "labels": "label-review contact sheets"}
+    step = Steps("audit", len(args.only))
     for name in args.only:
-        print(f"[audit] {name} ...", flush=True)
+        step(f"{name}: {what[name]}")
         text = run[name]()
         (OUT / f"{name}.md").write_text(text)
         print(text)
     parts = [(OUT / f"{s}.md").read_text() for s in SECTIONS if (OUT / f"{s}.md").exists()]
     (OUT / "audit.md").write_text("# Data audit\n\n" + "\n".join(parts))
-    print(f"[audit] wrote {OUT / 'audit.md'}")
+    step.done(f"wrote {OUT / 'audit.md'}")
 
 
 if __name__ == "__main__":

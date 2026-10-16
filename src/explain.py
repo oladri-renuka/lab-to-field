@@ -23,6 +23,7 @@ from src.data.datasets import read_manifest
 from src.data.transforms import eval_transform
 from src.eval import load_checkpoint
 from src.models.classifier import is_vit, norm_stats
+from src.utils import progress
 
 
 def grad_cam(model, x: torch.Tensor, target: int | None = None) -> tuple[np.ndarray, int]:
@@ -96,7 +97,8 @@ def main() -> None:
     cfg, classes = loaded[0][1], loaded[0][2]["classes"]
     images = fixed_images(cfg, args.n)
     fig, axes = plt.subplots(len(images), len(loaded) + 1, figsize=(2.4 * (len(loaded) + 1), 2.4 * len(images)))
-    for r, (path, label) in enumerate(images):
+    print(f"[explain] saliency for {len(images)} fixed PlantDoc-test images x {len(loaded)} runs", flush=True)
+    for r, (path, label) in enumerate(progress(images, "saliency", unit="img")):
         img = load_image(path)
         axes[r, 0].imshow(img.resize((224, 224)))
         axes[r, 0].set_title(classes[label].replace("___", "\n"), fontsize=6)
@@ -113,7 +115,7 @@ def main() -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
     fig.savefig(out, dpi=120)
-    print(f"wrote {out}")
+    print(f"[explain] wrote {out}")
 
 
 if __name__ == "__main__":

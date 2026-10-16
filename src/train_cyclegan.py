@@ -22,7 +22,7 @@ from torchvision.utils import save_image
 from src.data.io import load_image
 from src.data.datasets import read_manifest
 from src.models.cyclegan import ImagePool, PatchDiscriminator, ResnetGenerator, init_weights
-from src.utils import RunLogger, load_config, seed_everything, seed_worker
+from src.utils import RunLogger, Steps, load_config, progress, seed_everything, seed_worker
 
 
 def gan_transform(load: int, crop: int) -> T.Compose:
@@ -79,9 +79,12 @@ def main() -> None:
         return mse(pred, torch.ones_like(pred) if real else torch.zeros_like(pred))
 
     fixed_a = torch.stack([ds[i][0] for i in range(8)]).to(dev)
+    step = Steps("cyclegan", 2)
+    step(f"training lab->field CycleGAN: {t.epochs} epochs x {len(loader)} iters (A=PlantVillage, B=PlantDoc train)")
     for epoch in range(t.epochs):
         sums = {"G": 0.0, "D": 0.0, "cyc": 0.0, "idt": 0.0}
-        for real_A, real_B in loader:
+        bar = progress(loader, f"epoch {epoch + 1}/{t.epochs}", total=len(loader), unit="it")
+        for it, (real_A, real_B) in enumerate(bar):
             real_A, real_B = real_A.to(dev, non_blocking=True), real_B.to(dev, non_blocking=True)
             # Generators
             for d in (D_A, D_B):
@@ -104,11 +107,14 @@ def main() -> None:
             opt_D.step()
             for k, v in (("G", loss_G), ("D", loss_D), ("cyc", loss_cyc), ("idt", loss_idt)):
                 sums[k] += v.item()
+            if it % 50 == 0:
+                bar.set_postfix(G=f"{sums['G'] / (it + 1):.2f}", D=f"{sums['D'] / (it + 1):.2f}")
         sched_G.step()
         sched_D.step()
         avg = {f"loss_{k}": v / len(loader) for k, v in sums.items()}
         logger.log(avg, step=epoch)
-        print(f"[cyclegan {epoch:03d}] " + " ".join(f"{k}={v:.3f}" for k, v in avg.items()))
+        print(f"[cyclegan epoch {epoch + 1}/{t.epochs}] " + " ".join(f"{k}={v:.3f}" for k, v in avg.items())
+              + f" lr={sched_G.get_last_lr()[0]:.1e} (t+{step.elapsed()})", flush=True)
         if epoch % t.sample_every == 0:
             G_AB.eval()
             with torch.no_grad():
@@ -118,6 +124,8 @@ def main() -> None:
             torch.save({"G_AB": G_AB.state_dict(), "G_BA": G_BA.state_dict(), "epoch": epoch, "cfg": OmegaConf.to_container(cfg)},
                        out / "latest.pt")
     logger.finish()
+    step(f"saved {out / 'latest.pt'} and samples in {out / 'samples'}")
+    step.done()
 
 
 if __name__ == "__main__":

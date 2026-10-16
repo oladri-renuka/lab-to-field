@@ -28,7 +28,8 @@ from src.data.datasets import build_train_dataset
 from src.data.transforms import eval_transform, train_transform
 from src.eval import evaluate_run, make_loader, predict
 from src.models.classifier import build_classifier, norm_stats
-from src.utils import RunLogger, load_classes, load_config, run_dir, save_json, seed_everything, seed_worker
+from src.utils import (RunLogger, Steps, load_classes, load_config, progress, run_dir, save_json, seed_everything,
+                       seed_worker)
 
 
 def setup_distributed():
@@ -50,13 +51,15 @@ def lr_lambda(warmup: int, total: int, min_ratio: float):
     return f
 
 
-def train_one_epoch(model, loader, opt, sched, criterion, mixup, device, amp_dtype, cfg, prof=None):
+def train_one_epoch(model, loader, opt, sched, criterion, mixup, device, amp_dtype, cfg, prof=None, desc="train",
+                    show=True):
     model.train()
     n_img, data_wait, loss_sum = 0, 0.0, torch.zeros((), device=device)
     if device.type == "cuda":
         torch.cuda.reset_peak_memory_stats(device)
     t_epoch = t0 = time.perf_counter()
-    for step, (x, y) in enumerate(loader):
+    bar = progress(loader, desc, total=len(loader), enabled=show, unit="batch")
+    for step, (x, y) in enumerate(bar):
         x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
         data_wait += time.perf_counter() - t0
         if mixup is not None:
@@ -73,6 +76,8 @@ def train_one_epoch(model, loader, opt, sched, criterion, mixup, device, amp_dty
         n_img += x.size(0)
         if prof is not None:
             prof.step()
+        if show and step % 25 == 0:  # .item() syncs the GPU, so only occasionally
+            bar.set_postfix(loss=f"{loss.item():.3f}", lr=f"{sched.get_last_lr()[0]:.1e}")
         t0 = time.perf_counter()
     if device.type == "cuda":
         torch.cuda.synchronize(device)
@@ -96,6 +101,7 @@ def main() -> None:
 
     rank, world, device = setup_distributed()
     is_main = rank == 0
+    steps_log = Steps("train", 5, enabled=is_main)
     out_dir = run_dir(cfg)
     if is_main:
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -104,6 +110,8 @@ def main() -> None:
     seed_everything(cfg.seed, cfg.train.deterministic)  # identical model init on every rank
     classes = load_classes(cfg.paths.processed_dir)
     mcfg = cfg.models[cfg.model]
+    steps_log(f"building {cfg.model} ({mcfg.timm_name}, {len(classes)} classes)"
+              + (f", init from {cfg.train.init_from}" if cfg.train.init_from else ""))
     model = build_classifier(mcfg.timm_name, len(classes), pretrained=cfg.train.pretrained,
                              grad_checkpointing=cfg.train.grad_checkpointing)
     if cfg.train.init_from:
@@ -115,6 +123,7 @@ def main() -> None:
     mean, std = norm_stats(model)
 
     seed_everything(cfg.seed + rank)  # different augmentation stream per rank
+    steps_log(f"building datasets: train sources {list(cfg.data.train_sources)}, aug={cfg.aug.kind}")
     train_ds = build_train_dataset(cfg, train_transform(cfg.aug.kind, cfg.data.img_size, mean, std), cfg.seed)
     sampler = DistributedSampler(train_ds, seed=cfg.seed, drop_last=True) if world > 1 else None
     g = torch.Generator().manual_seed(cfg.seed)
@@ -148,9 +157,10 @@ def main() -> None:
     core = model.module if world > 1 else model
 
     logger = RunLogger(cfg, f"{cfg.exp_id}/{cfg.model}/seed{cfg.seed}", enabled=is_main)
-    if is_main:
-        print(f"[train] {cfg.exp_id} {cfg.model} seed={cfg.seed} n_train={len(train_ds)} world={world} "
-              f"global_batch={global_batch} lr={lr:.2e} precision={cfg.train.precision}")
+    steps_log(f"training {cfg.exp_id} | {cfg.model} | seed {cfg.seed} | train={len(train_ds)} imgs, "
+              f"{len(loader)} batches/epoch | val={len(val_loader.dataset)} | up to {cfg.train.epochs} epochs, "
+              f"early stop after {cfg.train.early_stop_patience} without val gain | global batch {global_batch}, "
+              f"lr {lr:.2e}, {cfg.train.precision} | output {out_dir}")
 
     best_acc, best_epoch, bad_epochs, history = -1.0, -1, 0, []
     for epoch in range(cfg.train.epochs):
@@ -164,7 +174,8 @@ def main() -> None:
                 on_trace_ready=torch.profiler.tensorboard_trace_handler(str(out_dir / "profile")),
             )
             prof.start()
-        stats = train_one_epoch(model, loader, opt, sched, criterion, mixup, device, amp_dtype, cfg, prof)
+        stats = train_one_epoch(model, loader, opt, sched, criterion, mixup, device, amp_dtype, cfg, prof,
+                                desc=f"epoch {epoch + 1}/{cfg.train.epochs} train", show=is_main)
         if prof is not None:
             prof.stop()
             key = "self_cuda_time_total" if device.type == "cuda" else "self_cpu_time_total"
@@ -173,24 +184,27 @@ def main() -> None:
 
         stop = torch.zeros(1, device=device)
         if is_main:
-            probs, labels = predict(core, val_loader, device, amp_dtype)
+            probs, labels = predict(core, val_loader, device, amp_dtype, desc=f"epoch {epoch + 1} val")
             val_acc = float((probs.argmax(1) == labels).mean())
             stats.update(epoch=epoch, val_acc=val_acc, lr=sched.get_last_lr()[0],
                          images_per_sec_global=stats["images_per_sec"] * world)
             history.append(stats)
             logger.log(stats, step=epoch)
-            print(f"[epoch {epoch:02d}] loss={stats['train_loss']:.4f} val_acc={val_acc:.4f} "
-                  f"img/s={stats['images_per_sec_global']:.0f} data_wait={stats['data_wait_frac']:.2f} "
-                  f"mem={stats['peak_mem_gb']:.2f}GB")
             if val_acc > best_acc:
                 best_acc, best_epoch, bad_epochs = val_acc, epoch, 0
                 torch.save({"model": core.state_dict(), "cfg": OmegaConf.to_container(cfg), "classes": classes,
                             "epoch": epoch, "val_acc": val_acc}, out_dir / "best.pt")
+                note = "new best, saved"
             else:
                 bad_epochs += 1
-                if bad_epochs >= cfg.train.early_stop_patience:
-                    print(f"[train] early stop at epoch {epoch} (best {best_epoch}: {best_acc:.4f})")
-                    stop += 1
+                note = f"no gain {bad_epochs}/{cfg.train.early_stop_patience} (best {best_acc:.4f} @ {best_epoch + 1})"
+            print(f"[epoch {epoch + 1:>2}/{cfg.train.epochs}] loss={stats['train_loss']:.4f} val_acc={val_acc:.4f} "
+                  f"| {note} | {stats['epoch_time_s']:.0f}s, {stats['images_per_sec_global']:.0f} img/s, "
+                  f"data_wait={stats['data_wait_frac']:.2f}, mem={stats['peak_mem_gb']:.1f}GB | t+{steps_log.elapsed()}",
+                  flush=True)
+            if bad_epochs >= cfg.train.early_stop_patience:
+                print(f"[train] early stop after epoch {epoch + 1}: best val_acc {best_acc:.4f} at epoch {best_epoch + 1}")
+                stop += 1
         if world > 1:
             dist.broadcast(stop, 0)
         if stop.item():
@@ -199,11 +213,16 @@ def main() -> None:
     if is_main:
         save_json({"history": history, "best_epoch": best_epoch, "best_val_acc": best_acc, "world_size": world,
                    "global_batch": global_batch, "lr": lr}, out_dir / "train_log.json")
+        steps_log(f"evaluating best checkpoint (epoch {best_epoch + 1}, val_acc {best_acc:.4f}) on PlantDoc test + PlantVillage test")
         m = evaluate_run(out_dir, device=str(device))
         logger.log({"pd_test_acc": m["pd_test"]["acc"], "pv_test_acc": m["pv_test"]["acc"], "gap": m["gap"],
                     "pd_test_macro_f1": m["pd_test"]["macro_f1"], "pd_test_ece": m["pd_test"]["ece"]}, step=epoch + 1)
-        print(f"[test] PD acc={m['pd_test']['acc']:.4f} PV acc={m['pv_test']['acc']:.4f} gap={m['gap']:.4f}")
+        lo, hi = m["pd_test"]["acc_ci95"]
+        print(f"[test] PD acc={m['pd_test']['acc']:.4f} (95% CI {lo:.3f}-{hi:.3f}) macro-F1={m['pd_test']['macro_f1']:.4f} "
+              f"| PV acc={m['pv_test']['acc']:.4f} | gap={m['gap']:.4f}")
         logger.finish()
+        steps_log(f"saved best.pt, metrics.json, train_log.json in {out_dir}")
+        steps_log.done("finished")
     if world > 1:
         dist.destroy_process_group()
 

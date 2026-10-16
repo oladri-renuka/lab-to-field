@@ -17,14 +17,14 @@ from src.data.datasets import ManifestDataset, read_manifest
 from src.data.transforms import eval_transform
 from src.metrics import classification_metrics
 from src.models.classifier import build_classifier, norm_stats
-from src.utils import save_json
+from src.utils import progress, save_json
 
 
 @torch.no_grad()
-def predict(model, loader, device, amp_dtype=None) -> tuple[np.ndarray, np.ndarray]:
+def predict(model, loader, device, amp_dtype=None, desc: str = "predict") -> tuple[np.ndarray, np.ndarray]:
     model.eval()
     probs, labels = [], []
-    for x, y in loader:
+    for x, y in progress(loader, desc, total=len(loader), unit="batch"):
         with torch.autocast(device.type, dtype=amp_dtype or torch.float32, enabled=amp_dtype is not None):
             logits = model(x.to(device, non_blocking=True))
         probs.append(logits.float().softmax(1).cpu())
@@ -57,7 +57,7 @@ def evaluate_run(run: str | Path, splits=("pd_test", "pv_test"), device=None) ->
     out = {"exp_id": cfg.exp_id, "model": cfg.model, "seed": int(cfg.seed), "best_epoch": ckpt["epoch"],
            "pd_val_acc": ckpt["val_acc"], "n_classes": len(classes)}
     for split in splits:
-        probs, labels = predict(model, make_loader(cfg, split, tf), device, amp)
+        probs, labels = predict(model, make_loader(cfg, split, tf), device, amp, desc=f"test {split}")
         out[split] = classification_metrics(probs, labels, classes, cfg.eval.ece_bins,
                                             cfg.eval.bootstrap if split == "pd_test" else 0)
     if "pd_test" in out and "pv_test" in out:

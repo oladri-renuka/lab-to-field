@@ -22,7 +22,7 @@ from src.data.datasets import IMG_EXTS
 from src.data.dedup import matches, phash
 from src.data.io import load_image
 from src.data.splits import stratified_val_split
-from src.utils import load_config, save_json
+from src.utils import Steps, load_config, progress, save_json
 
 SEG_SUFFIX = "_final_masked"
 
@@ -44,8 +44,8 @@ def fetch_plantvillage(cfg, configs=("color", "segmented")) -> Path:
         prefixes = tuple(f"raw/{c}/" for c in configs)
         with zipfile.ZipFile(zpath) as z:
             members = [m for m in z.namelist() if not m.endswith("/") and any(p in m for p in prefixes)]
-            print(f"[plantvillage] extracting {len(members)} files from data.zip")
-            z.extractall(root, members)
+            for m in progress(members, "extract data.zip", unit="file"):
+                z.extract(m, root)
         done.touch()
     # zip may or may not have a top-level folder above raw/
     for base in (root, *[d for d in root.iterdir() if d.is_dir()]):
@@ -143,7 +143,8 @@ def plantvillage_frames(cfg, base: Path, wanted: dict[str, str]) -> tuple[dict[s
 def read_plantdoc(root: Path, lookup: dict[str, str]) -> tuple[pd.DataFrame, list[str]]:
     rows, unmapped, bad = [], set(), []
     for split in ("train", "test"):
-        for folder in sorted(p for p in (root / split).iterdir() if p.is_dir()):
+        for folder in progress(sorted(p for p in (root / split).iterdir() if p.is_dir()), f"check PlantDoc {split}",
+                               unit="class"):
             pv_class = lookup.get(normalize(folder.name))
             if pv_class is None:
                 unmapped.add(folder.name)
@@ -174,6 +175,7 @@ def main() -> None:
     args = ap.parse_args()
     cfg = load_config(args.config, args.overrides)
     d = int(cfg.data.dedup_hamming)
+    step = Steps("prepare", 8)
 
     processed = Path(cfg.paths.processed_dir)
     manifests = processed / "manifests"
@@ -185,19 +187,21 @@ def main() -> None:
     targets = mapped_plantvillage_classes(cmap)
     wanted = {normalize(c): c for c in targets}
 
+    step("reading PlantDoc + mapping folders to shared classes")
     plantdoc, bad = read_plantdoc(Path(cfg.paths.plantdoc_dir), plantdoc_lookup(cmap))
     pd.Series(bad, name="path", dtype=str).to_csv(reports / "plantdoc_unreadable.csv", index=False)
+    step("PlantVillage: download/extract data.zip (skipped if done), official leaf-grouped splits")
     pv, all_color, seg_stats = plantvillage_frames(cfg, fetch_plantvillage(cfg), wanted)
 
-    print(f"[hash] pHash of {len(all_color)} PlantVillage color + {len(plantdoc)} PlantDoc images "
-          f"({args.workers} workers)")
-    pv_hash = phash(all_color.path.tolist(), args.workers)
-    pd_hash = phash(plantdoc.path.tolist(), args.workers)
+    step(f"perceptual hashing {len(all_color)} PlantVillage + {len(plantdoc)} PlantDoc images ({args.workers} workers)")
+    pv_hash = phash(all_color.path.tolist(), args.workers, "hash PlantVillage")
+    pd_hash = phash(plantdoc.path.tolist(), args.workers, "hash PlantDoc")
     np.savez_compressed(processed / "hashes.npz", pv_path=all_color.path.to_numpy(dtype=str),
                         pv_split=all_color.split.to_numpy(dtype=str), pv_label=all_color.pv_label.to_numpy(dtype=str),
                         pv_hash=pv_hash, pd_path=plantdoc.path.to_numpy(dtype=str),
                         pd_split=plantdoc.split.to_numpy(dtype=str), pd_hash=pd_hash)
 
+    step("removing PlantVillage test images near-identical to train")
     # PlantVillage test images near-identical to a PlantVillage train image (e.g. "... copy.jpg" duplicates
     # without a leaf id): removed from test so lab accuracy is not inflated.
     is_tr = (all_color.split == "train").to_numpy()
@@ -213,6 +217,7 @@ def main() -> None:
     print(f"[pv-dedup] PlantVillage test images near-identical to a train image (hamming <= {d}): {len(pv_leak)} "
           f"(all classes); removed from shared-class test: {n_before - len(pv['test'])}")
 
+    step("removing PlantVillage photos found inside PlantDoc")
     # 3. PlantVillage photos re-posted inside PlantDoc (any PlantDoc split, any PlantVillage class)
     contam = matches(pd_hash, pv_hash, d)
     contam_df = pd.DataFrame([{"plantdoc_path": plantdoc.path.iloc[i], "plantdoc_split": plantdoc.split.iloc[i],
@@ -224,6 +229,7 @@ def main() -> None:
     print(f"[contamination] PlantDoc images matching a PlantVillage image (hamming <= {d}), removed: "
           f"{contam_df.plantdoc_split.value_counts().to_dict() or 0}")
 
+    step("removing PlantDoc-train near-duplicates of PlantDoc test")
     # 4. PlantDoc train near-duplicates of PlantDoc test (test kept fixed)
     is_train = (plantdoc.split == "train").values
     tr, te = np.flatnonzero(keep & is_train), np.flatnonzero(keep & ~is_train)
@@ -235,6 +241,7 @@ def main() -> None:
     print(f"[dedup] removed {len(dups)} PlantDoc-train images near-duplicate to test (hamming <= {d})")
     plantdoc = plantdoc[keep]
 
+    step("label space, stratified PlantDoc val split")
     # Label space: mapped classes present in PlantVillage train AND (cleaned) PlantDoc test.
     in_pv = set(pv["train"].class_name)
     in_pd_test = set(plantdoc[plantdoc.split == "test"].class_name)
@@ -259,6 +266,7 @@ def main() -> None:
         "pd_val": pd_val,
         "pd_test": finalize(plantdoc[plantdoc.split == "test"]),
     }
+    step(f"writing manifests to {manifests} and reports/data_summary.md")
     for name, df in out.items():
         df.to_csv(manifests / f"{name}.csv", index=False)
 
@@ -283,6 +291,7 @@ def main() -> None:
     )
     (reports / "data_summary.md").write_text(summary)
     print(summary)
+    step.done("data ready")
 
 
 if __name__ == "__main__":

@@ -4,12 +4,14 @@ from __future__ import annotations
 import json
 import os
 import random
+import time
 from pathlib import Path
 from typing import Any, Iterable
 
 import numpy as np
 import torch
 from omegaconf import DictConfig, OmegaConf
+from tqdm import tqdm
 
 
 def seed_everything(seed: int, deterministic: bool = False) -> None:
@@ -106,3 +108,29 @@ def _flatten(d: dict, prefix: str = "") -> dict:
         else:
             out[key] = v
     return out
+
+
+def progress(iterable=None, desc: str = "", total: int | None = None, enabled: bool = True, leave: bool = False, **kw):
+    """Live progress bar (count, rate, ETA). Cleared when done unless leave=True; off on non-zero DDP ranks."""
+    return tqdm(iterable, desc=desc, total=total, disable=not enabled, leave=leave, dynamic_ncols=True,
+                mininterval=1.0, **kw)
+
+
+class Steps:
+    """Numbered stage messages with elapsed time: `[train 2/5] building datasets (t+0:42)`."""
+
+    def __init__(self, name: str, total: int, enabled: bool = True):
+        self.name, self.total, self.enabled, self.i, self.t0 = name, total, enabled, 0, time.time()
+
+    def elapsed(self) -> str:
+        sec = int(time.time() - self.t0)
+        return f"{sec // 3600}:{sec % 3600 // 60:02d}:{sec % 60:02d}" if sec >= 3600 else f"{sec // 60}:{sec % 60:02d}"
+
+    def __call__(self, msg: str) -> None:
+        self.i += 1
+        if self.enabled:
+            tqdm.write(f"[{self.name} {self.i}/{self.total}] {msg} (t+{self.elapsed()})")
+
+    def done(self, msg: str = "done") -> None:
+        if self.enabled:
+            tqdm.write(f"[{self.name}] {msg} in {self.elapsed()}")

@@ -20,12 +20,15 @@ def _phash_one(path: str) -> int:
     return int(np.packbits(bits).view(">u8")[0])
 
 
-def phash(paths: list[str], workers: int = 8) -> np.ndarray:
+def phash(paths: list[str], workers: int = 8, desc: str = "phash") -> np.ndarray:
     """64-bit pHash per image as uint64."""
+    from src.utils import progress
+
     if workers <= 1 or len(paths) < 200:
-        return np.array([_phash_one(p) for p in paths], dtype=np.uint64)
+        return np.array([_phash_one(p) for p in progress(paths, desc, unit="img")], dtype=np.uint64)
     with ProcessPoolExecutor(workers) as ex:
-        return np.fromiter(ex.map(_phash_one, paths, chunksize=256), dtype=np.uint64, count=len(paths))
+        it = progress(ex.map(_phash_one, paths, chunksize=256), desc, total=len(paths), unit="img")
+        return np.fromiter(it, dtype=np.uint64, count=len(paths))
 
 
 def _popcount(x: np.ndarray) -> np.ndarray:

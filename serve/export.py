@@ -24,12 +24,12 @@ from src.data.io import load_image
 from src.data.datasets import read_manifest
 from src.eval import load_checkpoint
 from src.models.classifier import norm_stats
-from src.utils import load_config, save_json
+from src.utils import Steps, load_config, progress, save_json
 
 
 class ImageReader(CalibrationDataReader):
     def __init__(self, paths, input_name, size, mean, std):
-        self.it = iter(paths)
+        self.it = iter(progress(paths, "calibrate INT8", unit="img"))
         self.args = (input_name, size, mean, std)
 
     def get_next(self):
@@ -52,9 +52,9 @@ def latency_ms(session: ort.InferenceSession, x: np.ndarray, warmup: int, iters:
     return float(np.percentile(t, 50)), float(np.percentile(t, 95))
 
 
-def accuracy(session, paths, labels, size, mean, std) -> float:
+def accuracy(session, paths, labels, size, mean, std, desc: str = "accuracy") -> float:
     name = session.get_inputs()[0].name
-    preds = [int(session.run(None, {name: preprocess(load_image(p), size, mean, std)})[0].argmax()) for p in paths]
+    preds = [int(session.run(None, {name: preprocess(load_image(p), size, mean, std)})[0].argmax()) for p in progress(list(paths), desc, unit="img")]
     return float((np.asarray(preds) == np.asarray(labels)).mean())
 
 
@@ -67,6 +67,8 @@ def main() -> None:
     out = Path(dcfg.export_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    step = Steps("deploy", 4)
+    step(f"loading {dcfg.checkpoint}")
     model, cfg, ckpt = load_checkpoint(dcfg.checkpoint, "cpu")
     model.eval()
     mean, std = norm_stats(model)
@@ -77,8 +79,10 @@ def main() -> None:
     torch.save(model.state_dict(), out / "model_fp32.pt")  # for Grad-CAM in the app
 
     fp32, pre, int8 = out / "model_fp32.onnx", out / "model_fp32_pre.onnx", out / "model_int8.onnx"
+    step("exporting ONNX FP32")
     torch.onnx.export(model, torch.randn(1, 3, size, size), fp32, input_names=["input"], output_names=["logits"],
                       dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}}, opset_version=dcfg.opset, dynamo=False)
+    step(f"INT8 static quantization, calibrating on {dcfg.calibration_images} PlantDoc-train images")
     quant_pre_process(str(fp32), str(pre))
     calib = read_manifest(cfg, "pd_train").sample(n=dcfg.calibration_images, random_state=dcfg.calibration_seed)
     quantize_static(str(pre), str(int8), ImageReader(calib.path.tolist(), "input", size, mean, std),
@@ -92,10 +96,12 @@ def main() -> None:
     x = np.random.default_rng(0).standard_normal((1, 3, size, size)).astype(np.float32)
     report = {"cpu": platform.processor() or platform.machine(), "threads": dcfg.latency.threads,
               "onnxruntime": ort.__version__, "n_test": len(test)}
+    step(f"benchmark FP32 vs INT8: PlantDoc-test accuracy, size, latency ({dcfg.latency.iters} runs, batch 1, "
+         f"{dcfg.latency.threads} threads)")
     for tag, path in (("fp32", fp32), ("int8", int8)):
         sess = ort.InferenceSession(str(path), opts, providers=["CPUExecutionProvider"])
         p50, p95 = latency_ms(sess, x, dcfg.latency.warmup, dcfg.latency.iters)
-        report[tag] = {"pd_test_acc": accuracy(sess, test.path, test.label, size, mean, std),
+        report[tag] = {"pd_test_acc": accuracy(sess, test.path, test.label, size, mean, std, f"{tag} accuracy"),
                        "size_mb": path.stat().st_size / 2**20, "latency_p50_ms": p50, "latency_p95_ms": p95}
     save_json(report, "reports/deploy.json")
     md = ("| Model | PlantDoc acc | Size (MB) | p50 (ms) | p95 (ms) |\n|---|---|---|---|---|\n"
@@ -104,6 +110,7 @@ def main() -> None:
           + f"\nCPU: {report['cpu']}, {report['threads']} threads, batch 1, onnxruntime {report['onnxruntime']}.\n")
     Path("reports/deploy.md").write_text(md)
     print(md)
+    step.done("wrote reports/deploy.md, reports/deploy.json")
 
 
 if __name__ == "__main__":

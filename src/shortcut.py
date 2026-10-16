@@ -29,7 +29,8 @@ from src.eval import predict
 from src.metrics import classification_metrics
 from src.models.classifier import build_classifier, norm_stats
 from src.train import lr_lambda
-from src.utils import RunLogger, load_classes, load_config, run_dir, save_json, seed_everything, seed_worker
+from src.utils import (RunLogger, Steps, load_classes, load_config, progress, run_dir, save_json, seed_everything,
+                       seed_worker)
 
 
 def attach_segmented(cfg, df: pd.DataFrame) -> pd.DataFrame:
@@ -115,10 +116,13 @@ def main() -> None:
     out_dir = run_dir(cfg)
     out_dir.mkdir(parents=True, exist_ok=True)
     classes = load_classes(cfg.paths.processed_dir)
+    step = Steps("shortcut", 4)
 
+    step(f"pairing color images with segmented masks (seed {cfg.seed})")
     train_df = attach_segmented(cfg, read_manifest(cfg, "pv_train"))
     test_df = attach_segmented(cfg, read_manifest(cfg, "pv_test"))
     print(f"[shortcut] train={len(train_df)} test={len(test_df)} (with segmented masks)")
+    step(f"example figure -> reports/figures/{cfg.exp_id}_examples.png; building {cfg.model}")
     example_figure(test_df, cfg.shortcut, classes, Path(f"reports/figures/{cfg.exp_id}_examples.png"))
 
     model = build_classifier(cfg.models[cfg.model].timm_name, len(classes), pretrained=cfg.train.pretrained).to(dev)
@@ -138,10 +142,12 @@ def main() -> None:
     crit = nn.CrossEntropyLoss()
     amp = torch.bfloat16 if dev.type == "cuda" and cfg.train.precision == "bf16" else None
     logger = RunLogger(cfg, f"shortcut/{cfg.model}/seed{cfg.seed}")
+    step(f"training on background-only tiles: {cfg.train.epochs} epochs x {steps} batches")
     for epoch in range(cfg.train.epochs):
         model.train()
         tot = 0.0
-        for x, y in loader:
+        bar = progress(loader, f"epoch {epoch + 1}/{cfg.train.epochs}", total=steps, unit="batch")
+        for k, (x, y) in enumerate(bar):
             x, y = x.to(dev, non_blocking=True), y.to(dev, non_blocking=True)
             with torch.autocast(dev.type, dtype=amp or torch.float32, enabled=amp is not None):
                 loss = crit(model(x), y)
@@ -150,10 +156,13 @@ def main() -> None:
             opt.step()
             sched.step()
             tot += loss.item()
+            if k % 25 == 0:
+                bar.set_postfix(loss=f"{tot / (k + 1):.3f}")
         logger.log({"train_loss": tot / steps}, step=epoch)
-        print(f"[shortcut {epoch:02d}] loss={tot / steps:.4f}")
+        print(f"[shortcut epoch {epoch + 1}/{cfg.train.epochs}] loss={tot / steps:.4f} (t+{step.elapsed()})", flush=True)
 
-    probs, labels = predict(model, test_loader, dev, amp)
+    step("evaluating on background-only PlantVillage test")
+    probs, labels = predict(model, test_loader, dev, amp, desc="test")
     m = classification_metrics(probs, labels, classes, cfg.eval.ece_bins, cfg.eval.bootstrap)
     majority = float(pd.Series(labels).value_counts(normalize=True).iloc[0])
     result = {"seed": int(cfg.seed), "model": cfg.model, "test_acc": m["acc"], "test_acc_ci95": m["acc_ci95"],
@@ -165,6 +174,7 @@ def main() -> None:
     print(f"[shortcut] background-only PlantVillage test acc={m['acc']:.3f} (95% CI {m['acc_ci95'][0]:.3f}–"
           f"{m['acc_ci95'][1]:.3f}), macro-F1={m['macro_f1']:.3f}; chance: uniform={1 / len(classes):.3f}, "
           f"majority={majority:.3f}")
+    step.done(f"saved {out_dir / 'metrics.json'}")
 
 
 if __name__ == "__main__":
