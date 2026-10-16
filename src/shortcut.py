@@ -5,7 +5,7 @@
 Each image becomes a shuffled grid of patches cut only from leaf-free regions (leaf mask from the segmented
 config, dilated). If a classifier trained on these beats chance by a wide margin on PlantVillage *test*,
 the background alone predicts the label: the shortcut the project is about.
-Writes runs/shortcut/<model>/seed<k>/metrics.json and reports/figures/shortcut_examples.png.
+Writes runs/<exp_id>/<model>/seed<k>/metrics.json and reports/figures/<exp_id>_examples.png.
 """
 from __future__ import annotations
 
@@ -50,7 +50,8 @@ def attach_segmented(cfg, df: pd.DataFrame) -> pd.DataFrame:
 
 def background_tile(color: Image.Image, seg: Image.Image, sc, rng: random.Random) -> Image.Image:
     color = color.resize((256, 256))
-    mask = leaf_mask(seg.resize((256, 256))).filter(ImageFilter.MaxFilter(sc.dilate | 1))
+    # Convex hull: lesion holes the segmentation left inside the leaf are never treated as background.
+    mask = leaf_mask(seg.resize((256, 256)), hull=sc.hull).filter(ImageFilter.MaxFilter(sc.dilate | 1))
     m = np.asarray(mask) > 0
     x = np.asarray(color).copy()
     c, st = sc.cell, sc.stride
@@ -118,7 +119,7 @@ def main() -> None:
     train_df = attach_segmented(cfg, read_manifest(cfg, "pv_train"))
     test_df = attach_segmented(cfg, read_manifest(cfg, "pv_test"))
     print(f"[shortcut] train={len(train_df)} test={len(test_df)} (with segmented masks)")
-    example_figure(test_df, cfg.shortcut, classes, Path("reports/figures/shortcut_examples.png"))
+    example_figure(test_df, cfg.shortcut, classes, Path(f"reports/figures/{cfg.exp_id}_examples.png"))
 
     model = build_classifier(cfg.models[cfg.model].timm_name, len(classes), pretrained=cfg.train.pretrained).to(dev)
     mean, std = norm_stats(model)

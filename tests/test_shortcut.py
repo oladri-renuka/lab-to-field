@@ -7,7 +7,7 @@ from PIL import Image
 from src.data.prepare import leaf_key
 from src.shortcut import background_tile
 
-SC = OmegaConf.create({"cell": 32, "grid": 4, "stride": 16, "dilate": 9, "min_clean": 4})
+SC = OmegaConf.create({"cell": 32, "grid": 4, "stride": 16, "dilate": 9, "min_clean": 4, "hull": True})
 
 
 def test_leaf_key_pairs_color_and_segmented():
@@ -41,3 +41,15 @@ def test_pair_index_falls_back_to_unique_suffix():
     idx = PairIndex(seg)
     assert idx.get("raw/color/Corn_(maize)___Common_rust_/RS_Rust 1566.JPG") == seg[0]
     assert idx.get("raw/color/Corn_(maize)___Common_rust_/RS_Rust 1567.JPG") is None  # ambiguous -> no pairing
+
+
+def test_background_tile_never_samples_cut_away_lesion():
+    color = np.full((256, 256, 3), (90, 60, 30), np.uint8)
+    color[40:216, 40:216] = (0, 200, 0)
+    color[100:156, 100:156] = (255, 0, 0)  # lesion
+    seg = np.zeros_like(color)
+    seg[40:216, 40:216] = (0, 200, 0)
+    seg[100:156, 100:156] = 0  # segmentation removed the lesion -> a hole inside the leaf
+    for k in range(5):
+        tile = np.asarray(background_tile(Image.fromarray(color), Image.fromarray(seg), SC, random.Random(k)))
+        assert not ((tile[..., 0] > 200) & (tile[..., 1] < 50)).any()

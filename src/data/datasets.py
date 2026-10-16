@@ -13,7 +13,7 @@ from omegaconf import DictConfig
 from torch.utils.data import ConcatDataset, Dataset
 
 from src.data.io import load_image
-from src.data.composite import composite, random_background
+from src.data.composite import composite, leaf_mask, random_background
 from src.data.splits import few_shot
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -48,30 +48,36 @@ class ManifestDataset(Dataset):
 
 
 class CompositeDataset(Dataset):
-    """A fresh random composite of each segmented leaf every time it is drawn."""
+    """A fresh random composite of each leaf every time it is drawn.
+
+    Mask from the segmented image (repaired: lesions the segmentation cut away are filled back in);
+    pixels from the matching color image when the manifest has `color_path`.
+    """
 
     def __init__(self, seg_df: pd.DataFrame, background_paths: list[str], ccfg: DictConfig, transform=None):
         if not background_paths:
             raise ValueError("no background images for compositing")
-        self.leaves = ManifestDataset(seg_df)
+        self.seg = seg_df["path"].tolist()
+        self.color = seg_df["color_path"].tolist() if "color_path" in seg_df else self.seg
+        self.labels = seg_df["label"].astype(int).tolist()
         self.backgrounds = background_paths
         self.c = ccfg
         self.transform = transform
 
     def __len__(self) -> int:
-        return len(self.leaves)
+        return len(self.seg)
 
     def __getitem__(self, i):
         rng = random  # seeded per worker by src.utils.seed_worker
-        leaf, label = self.leaves[i]
+        seg, leaf = load_image(self.seg[i]), load_image(self.color[i])
+        mask = leaf_mask(seg, self.c.mask_threshold, repair=self.c.mask_repair).resize(leaf.size)
         bg = random_background(load_image(rng.choice(self.backgrounds)), self.c.canvas, tuple(self.c.bg_crop_scale), rng)
         img = composite(
             leaf, bg, rng,
             leaf_scale=tuple(self.c.leaf_scale), rotation=self.c.rotation,
-            leaf_blur=tuple(self.c.leaf_blur), bg_blur=tuple(self.c.bg_blur),
-            mask_threshold=self.c.mask_threshold,
+            leaf_blur=tuple(self.c.leaf_blur), bg_blur=tuple(self.c.bg_blur), mask=mask,
         )
-        return (self.transform(img) if self.transform else img), label
+        return (self.transform(img) if self.transform else img), self.labels[i]
 
 
 def background_paths(cfg: DictConfig) -> list[str]:

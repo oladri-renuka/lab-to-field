@@ -39,6 +39,7 @@ composite:
   bg_blur: [0.0, 2.0]
   bg_crop_scale: [0.15, 0.6]
   mask_threshold: 12
+  mask_repair: 7                # closing iterations + hole fill: restores lesions the segmentation cut away
 
 models:
   resnet50:        {timm_name: resnet50.a1_in1k,                           lr: 3.0e-4}

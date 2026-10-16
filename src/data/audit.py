@@ -9,7 +9,7 @@ Sections:
   counts  per-class PlantDoc test counts, imbalance ratios
   files   verify every file; formats, modes, EXIF rotation, tiny images, resolution/aspect plots
   stats   lab vs field pixel statistics: channel mean/std, brightness, blur (Laplacian variance)
-  seg     segmented <-> color pairing and mask quality (area, fragments, alignment), worst-case grid
+  seg     segmented <-> color pairing, mask quality, lesions cut away by the segmentation (repair gain)
   labels  contact sheets for manual label review (20 PlantDoc / 10 PlantVillage per class) + CSV template
 The background-only shortcut classifier is a separate experiment: `python -m src.shortcut`.
 """
@@ -28,7 +28,7 @@ import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw
 
-from src.data.composite import leaf_mask
+from src.data.composite import binary_leaf_mask
 from src.data.dedup import nearest
 from src.data.io import load_image
 from src.metrics import bootstrap_accuracy_ci
@@ -225,19 +225,34 @@ def section_stats(cfg, workers: int, n: int = 2000) -> str:
 def _mask_quality(args) -> dict:
     from scipy import ndimage
 
-    seg_path, color_path = args
+    seg_path, color_path, repair = args
     seg, col = load_image(seg_path), load_image(color_path)
     if seg.size != col.size:
         return {"path": seg_path, "size_mismatch": True}
-    mask = np.asarray(leaf_mask(seg)) > 127
+    mask = binary_leaf_mask(seg)
+    fixed = binary_leaf_mask(seg, repair=repair)
     lab, n = ndimage.label(mask)
     sizes = np.bincount(lab.ravel())[1:] if n else np.array([0])
     big = int((sizes > 0.005 * mask.size).sum())
     s, c = (np.asarray(x, dtype=np.float32) / 255 for x in (seg, col))
     align = float(np.abs(s - c)[mask].mean()) if mask.any() else 1.0
     border = float(np.concatenate([mask[0], mask[-1], mask[:, 0], mask[:, -1]]).mean())
+    gain = float((fixed.sum() - mask.sum()) / max(1, fixed.sum()))
     return {"path": seg_path, "color_path": color_path, "size_mismatch": False, "area": float(mask.mean()),
-            "components": int(n), "large_components": big, "align_err": align, "border_touch": border}
+            "components": int(n), "large_components": big, "align_err": align, "border_touch": border,
+            "repair_gain": gain}
+
+
+def _repair_sheet(rows: pd.DataFrame, repair: int, out: Path, t: int = 128) -> None:
+    """color | segmented | color through repaired mask (what compositing pastes)."""
+    sheet = Image.new("RGB", (3 * t, t * len(rows)), "white")
+    for k, r in enumerate(rows.itertuples()):
+        col, seg = load_image(r.color_path), load_image(r.path)
+        fixed = Image.fromarray(binary_leaf_mask(seg, repair=repair).astype(np.uint8) * 255, "L")
+        pasted = Image.composite(col, Image.new("RGB", col.size), fixed)
+        for j, im in enumerate((col, seg, pasted)):
+            sheet.paste(im.resize((t, t)), (j * t, k * t))
+    sheet.save(out, quality=90)
 
 
 def section_seg(cfg, workers: int, n: int = 3000) -> str:
@@ -245,7 +260,8 @@ def section_seg(cfg, workers: int, n: int = 3000) -> str:
     seg = pd.read_csv(Path(cfg.paths.processed_dir) / "manifests" / "pv_seg_train.csv")
     sample = seg.sample(n=min(n, len(seg)), random_state=0)
     with ProcessPoolExecutor(workers) as ex:
-        q = pd.DataFrame(list(ex.map(_mask_quality, zip(sample.path, sample.color_path), chunksize=64)))
+        args = [(a, b, int(cfg.composite.mask_repair)) for a, b in zip(sample.path, sample.color_path)]
+        q = pd.DataFrame(list(ex.map(_mask_quality, args, chunksize=64)))
     q.to_csv(OUT / "segmented_mask_quality.csv", index=False)
     ok = q[~q.size_mismatch]
     flags = {
@@ -253,8 +269,11 @@ def section_seg(cfg, workers: int, n: int = 3000) -> str:
         "mask area < 5% (leaf mostly cut away)": int((ok.area < 0.05).sum()),
         "mask area > 90% (background left in)": int((ok.area > 0.9).sum()),
         "> 1 large fragment (specks / split leaf)": int((ok.large_components > 1).sum()),
-        "pixel mismatch vs color > 0.10 (not aligned)": int((ok.align_err > 0.10).sum()),
+        "pixel mismatch vs color > 0.10": int((ok.align_err > 0.10).sum()),
+        "lesions cut away: repair restores > 10% of leaf": int((ok.repair_gain > 0.10).sum()),
     }
+    _repair_sheet(ok.sort_values("repair_gain", ascending=False).head(8), int(cfg.composite.mask_repair),
+                  OUT / "segmented_repaired.jpg")
     bad = ok[(ok.area < 0.05) | (ok.area > 0.9) | (ok.large_components > 1) | (ok.align_err > 0.10)]
     worst = bad.assign(score=bad.large_components + 10 * bad.align_err + (bad.area < 0.05) + (bad.area > 0.9)) \
         .sort_values("score", ascending=False).head(8)
@@ -278,8 +297,12 @@ def section_seg(cfg, workers: int, n: int = 3000) -> str:
         "(the two configs were split differently; compositing uses color-train counterparts only, so these never enter training)\n"
         f"- Mask quality on {len(q)} sampled leaves:\n\n"
         + pd.Series(flags, name="images").to_frame().to_markdown() + "\n\n"
-        f"Median mask area {ok.area.median():.2f}, median alignment error {ok.align_err.median():.3f}. "
-        "Worst cases (color | segmented): `segmented_worst.jpg`; all rows: `segmented_mask_quality.csv`.\n"
+        f"Median mask area {ok.area.median():.2f}, median alignment error {ok.align_err.median():.3f}, "
+        f"median repair gain {ok.repair_gain.median():.3f}.\n\n"
+        "The PlantVillage segmentation removes dark necrotic lesions as if they were background. Compositing "
+        f"therefore uses a repaired mask (closing x{cfg.composite.mask_repair} + hole fill) over the *color* image, and "
+        "the shortcut test treats the leaf's convex hull as leaf. Largest repairs (color | segmented | pasted): "
+        "`segmented_repaired.jpg`; worst raw masks: `segmented_worst.jpg`; all rows: `segmented_mask_quality.csv`.\n"
     )
 
 
