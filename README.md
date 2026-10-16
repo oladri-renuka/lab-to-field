@@ -33,7 +33,7 @@ close, compared with plain augmentation and with fine-tuning on a few real field
 | PlantDoc | GitHub `pratikkayal/PlantDoc-Dataset` (CC BY 4.0) | Field test set, field val set, few-shot pool |
 
 Rules enforced in `src/data/prepare.py`:
-- **Shared classes only.** `configs/class_map.csv` maps PlantDoc folders to PlantVillage classes (two PlantDoc soybean folders map to one class). The label space is the mapped classes that appear in both PlantVillage train and PlantDoc test. **Shared classes: _N_** (see `reports/data_summary.md`).
+- **Shared classes only.** `configs/class_map.csv` maps PlantDoc folders to PlantVillage classes (two PlantDoc soybean folders map to one class). The label space is the mapped classes that appear in both PlantVillage train and PlantDoc test. **Shared classes: 27** (Potato healthy and Tomato spider mites map across but have no PlantDoc-test images). PlantDoc test has **236 images**, and 17 of the 27 classes have fewer than 10, so per-class numbers are noisy and every accuracy carries a bootstrap CI (see `reports/data_summary.md`).
 - **PlantDoc test is held out.** Early stopping, checkpoint selection, and the choice of E6's base experiment all use **PlantDoc-val**: a stratified 20% of PlantDoc train with a fixed split seed.
 - **Near-duplicates removed.** Any PlantDoc-train image within pHash Hamming distance ≤ 4 of a test image is dropped. The pairs are listed in `reports/dedup_plantdoc.csv`.
 - No TFDS. Its single ungrouped split leaks the same leaf across train and test.
@@ -44,17 +44,18 @@ Rules enforced in `src/data/prepare.py`:
 
 | Check | Result |
 |---|---|
-| PlantVillage leaf grouping: leaf ids in both train and test | — |
-| PlantVillage images re-posted inside PlantDoc (removed, any split) | — |
-| PlantDoc train ↔ test near-duplicates (removed from train) | — |
-| Segmented-train leaves whose color version is in test (excluded from compositing) | — |
+| PlantVillage leaf grouping: leaf ids in both train and test | **0** (25% of images have no leaf id; pHash found 260 test images near-identical to a train image, **246** in shared classes, removed from test) |
+| PlantVillage images re-posted inside PlantDoc (removed, any split) | **1** (train) |
+| PlantDoc train ↔ test near-duplicates (removed from train) | **15** |
+| Segmented-train leaves whose color version is in test (excluded from compositing) | **8,469**: the color and segmented configs were split independently |
+| Leaves where the segmentation cut away lesions (> 10% of leaf restored by mask repair) | **1.1%** (33 / 3,000 sampled) |
 | Estimated PlantDoc label error (manual review, 20 per class) | — |
-| **Background-only classifier, PlantVillage test acc** (chance 1/27 = 0.037) | — |
+| **Background-only classifier, PlantVillage test acc** (uniform chance 0.037, majority class 0.156) | **0.859 ± 0.002** (3 seeds, EfficientNet-B0; convex-hull leaf mask) |
 
-![Background-only inputs](reports/figures/shortcut_examples.png)
+![Background-only inputs](reports/figures/shortcut_hull_examples.png)
 
 *Background-only input: a shuffled grid of patches from leaf-free regions (mask from the segmented config, dilated).
-No leaf pixels and no silhouette remain, so above-chance accuracy can only come from the background.*
+No leaf pixels and no silhouette remain, so above-chance accuracy can only come from the background. The leaf region is the convex hull of the segmentation mask plus a 9 px margin, because the PlantVillage segmentation sometimes cuts dark lesions out of the leaf. With the raw mask the result was 0.870 ± 0.005, so lesion leakage accounts for about 1 point.*
 
 ## Baseline first
 
