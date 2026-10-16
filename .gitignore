@@ -4,6 +4,7 @@
 /mlflow.db
 /mlartifacts/
 /wandb/
+/logs/
 serve/artifacts/
 __pycache__/
 *.pyc
