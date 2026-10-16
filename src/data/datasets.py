@@ -10,10 +10,12 @@ from pathlib import Path
 
 import pandas as pd
 from omegaconf import DictConfig
+from PIL import Image
 from torch.utils.data import ConcatDataset, Dataset
 
+from src.data.composite import composite, random_background
+from src.data.composite_cache import cached_backgrounds, cached_masks
 from src.data.io import load_image
-from src.data.composite import composite, leaf_mask, random_background
 from src.data.splits import few_shot
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -50,27 +52,29 @@ class ManifestDataset(Dataset):
 class CompositeDataset(Dataset):
     """A fresh random composite of each leaf every time it is drawn.
 
-    Mask from the segmented image (repaired: lesions the segmentation cut away are filled back in);
-    pixels from the matching color image when the manifest has `color_path`.
+    Mask: repaired segmentation mask (lesions the segmentation cut away are filled back in), precomputed by
+    src.data.composite_cache. Pixels: the matching color image when the manifest has `color_path`.
     """
 
-    def __init__(self, seg_df: pd.DataFrame, background_paths: list[str], ccfg: DictConfig, transform=None):
+    def __init__(self, seg_df: pd.DataFrame, mask_paths: list[str], background_paths: list[str], ccfg: DictConfig,
+                 transform=None):
         if not background_paths:
             raise ValueError("no background images for compositing")
-        self.seg = seg_df["path"].tolist()
-        self.color = seg_df["color_path"].tolist() if "color_path" in seg_df else self.seg
+        self.color = seg_df["color_path"].tolist() if "color_path" in seg_df else seg_df["path"].tolist()
+        self.masks = mask_paths
         self.labels = seg_df["label"].astype(int).tolist()
         self.backgrounds = background_paths
         self.c = ccfg
         self.transform = transform
 
     def __len__(self) -> int:
-        return len(self.seg)
+        return len(self.color)
 
     def __getitem__(self, i):
         rng = random  # seeded per worker by src.utils.seed_worker
-        seg, leaf = load_image(self.seg[i]), load_image(self.color[i])
-        mask = leaf_mask(seg, self.c.mask_threshold, repair=self.c.mask_repair).resize(leaf.size)
+        leaf = load_image(self.color[i])
+        with Image.open(self.masks[i]) as m:
+            mask = m.convert("L").resize(leaf.size)
         bg = random_background(load_image(rng.choice(self.backgrounds)), self.c.canvas, tuple(self.c.bg_crop_scale), rng)
         img = composite(
             leaf, bg, rng,
@@ -107,7 +111,11 @@ def build_train_dataset(cfg: DictConfig, transform, seed: int) -> Dataset:
         if cfg.data.max_train_samples:
             df = df.sample(n=min(len(df), int(cfg.data.max_train_samples)), random_state=seed)
         if source == "pv_composite":
-            parts.append(CompositeDataset(df, background_paths(cfg), cfg.composite, transform))
+            c, cache = cfg.composite, Path(cfg.paths.processed_dir) / "composite_cache"
+            workers = max(1, int(cfg.data.num_workers))
+            masks = cached_masks(df["path"].tolist(), cache, int(c.mask_threshold), int(c.mask_repair), workers)
+            bgs = cached_backgrounds(background_paths(cfg), cache, int(c.bg_max_side), workers)
+            parts.append(CompositeDataset(df, masks, bgs, c, transform))
         else:
             parts.append(ManifestDataset(df, transform))
     return parts[0] if len(parts) == 1 else ConcatDataset(parts)

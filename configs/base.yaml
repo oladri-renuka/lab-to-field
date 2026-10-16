@@ -38,6 +38,7 @@ composite:
   leaf_blur: [0.0, 1.0]
   bg_blur: [0.0, 2.0]
   bg_crop_scale: [0.15, 0.6]
+  bg_max_side: 512              # backgrounds are cached downsized to this (decode cost)
   mask_threshold: 12
   mask_repair: 7                # closing iterations + hole fill: restores lesions the segmentation cut away
 
