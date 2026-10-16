@@ -28,7 +28,7 @@ from src.data.datasets import build_train_dataset
 from src.data.transforms import eval_transform, train_transform
 from src.eval import evaluate_run, make_loader, predict
 from src.models.classifier import build_classifier, norm_stats
-from src.utils import (RunLogger, Steps, load_classes, load_config, progress, run_dir, save_json, seed_everything,
+from src.utils import (RunLock, RunLogger, Steps, load_classes, load_config, progress, run_dir, save_json, seed_everything,
                        seed_worker)
 
 
@@ -98,6 +98,14 @@ def main() -> None:
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
     cfg = load_config(args.config, args.overrides)
+    if int(os.environ.get("RANK", 0)) == 0:
+        with RunLock(run_dir(cfg)):
+            run(cfg)
+    else:
+        run(cfg)
+
+
+def run(cfg) -> None:
 
     rank, world, device = setup_distributed()
     is_main = rank == 0

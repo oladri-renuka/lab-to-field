@@ -134,3 +134,34 @@ class Steps:
     def done(self, msg: str = "done") -> None:
         if self.enabled:
             tqdm.write(f"[{self.name}] {msg} in {self.elapsed()}")
+
+
+class RunLock:
+    """Refuse to start if another live process is training into the same run directory.
+
+    Two processes writing one run dir overwrite each other's best.pt / metrics.json silently.
+    """
+
+    def __init__(self, run_dir: Path):
+        self.path = Path(run_dir) / ".lock"
+
+    def __enter__(self):
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if self.path.exists():
+            try:
+                pid = int(self.path.read_text().strip() or 0)
+                os.kill(pid, 0)  # raises if that process is gone
+                raise RuntimeError(f"{self.path.parent} is already being trained by PID {pid}. "
+                                   f"Wait for it, or stop it (kill {pid}) before starting another run here.")
+            except (ValueError, ProcessLookupError, PermissionError):
+                pass  # stale lock from a crashed/finished run
+        self.path.write_text(str(os.getpid()))
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            if self.path.read_text().strip() == str(os.getpid()):
+                self.path.unlink()
+        except FileNotFoundError:
+            pass
+        return False

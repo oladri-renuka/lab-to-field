@@ -141,7 +141,7 @@ def main() -> None:
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lr_lambda(cfg.train.warmup_epochs * steps, cfg.train.epochs * steps, 0.0))
     crit = nn.CrossEntropyLoss()
     amp = torch.bfloat16 if dev.type == "cuda" and cfg.train.precision == "bf16" else None
-    logger = RunLogger(cfg, f"shortcut/{cfg.model}/seed{cfg.seed}")
+    logger = RunLogger(cfg, f"{cfg.exp_id}/{cfg.model}/seed{cfg.seed}")
     step(f"training on background-only tiles: {cfg.train.epochs} epochs x {steps} batches")
     for epoch in range(cfg.train.epochs):
         model.train()
