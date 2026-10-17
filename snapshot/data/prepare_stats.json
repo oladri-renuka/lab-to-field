@@ -1,6 +1,6 @@
 {
-  "color_train_shared": 31098,
-  "color_train_with_segmented": 31098,
+  "color_train_shared": 27988,
+  "color_train_with_segmented": 27988,
   "segmented_total": 54306,
   "segmented_without_color": 1,
   "segmented_train_listed_but_color_test": 8469,

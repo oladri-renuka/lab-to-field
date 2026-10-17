@@ -61,3 +61,7 @@ The PlantVillage segmentation removes dark necrotic lesions as if they were back
 ## 4. Label quality
 
 Contact sheets: `reports/audit/labels/{plantdoc,plantvillage}/<class>.jpg` (20 PlantDoc / 10 PlantVillage per class, numbered tiles). Fill the `correct` column of `label_review.csv` with 1/0, then run `python -m src.data.audit --score-labels`.
+
+## 4c. Full PlantDoc test-label review
+
+All 236 test images: `reports/audit/labels/plantdoc_test_all/<class>.jpg`. In `test_label_review.csv` set `correct` to 1 (label right) or 0 (wrong). For a wrong one, put the right class name (exactly as in `data/processed/classes.json`) in `corrected_class`, or leave it empty if the image fits no class / is unusable. `python -m src.report` then adds accuracy on the reviewed labels, using saved predictions (no re-training).
