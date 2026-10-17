@@ -83,6 +83,9 @@ def main() -> None:
                                                int(cfg.data.img_size), int(cfg.data.cache_workers))))
     step = Steps("cvae", len(grouped))
     for gname, members in grouped.items():
+        if (out / gname / "cvae.pt").exists() and not cfg.get("retrain", False):
+            step(f"group '{gname}': already trained ({out / gname / 'cvae.pt'}), skipping (retrain=true to redo)")
+            continue
         seed_everything(cfg.seed)
         df = frames[gname]
         dom_counts = df.domain.value_counts()
@@ -115,7 +118,9 @@ def main() -> None:
                   f"kl={kl_s/n:.1f} beta={beta:.2f} (t+{step.elapsed()})", flush=True)
         gdir = out / gname
         gdir.mkdir(parents=True, exist_ok=True)
-        torch.save({"model": model.state_dict(), "members": members, "cfg": OmegaConf.to_container(cfg)}, gdir / "cvae.pt")
+        tmp = gdir / "cvae.pt.tmp"  # atomic: a crash mid-save must not leave a "finished" group behind
+        torch.save({"model": model.state_dict(), "members": members, "cfg": OmegaConf.to_container(cfg)}, tmp)
+        tmp.replace(gdir / "cvae.pt")
         with torch.no_grad():
             y = torch.arange(len(members), device=dev).repeat_interleave(8) * 2 + 1  # field domain
             save_image(model.eval().sample(y), gdir / "samples_field.jpg", nrow=8)

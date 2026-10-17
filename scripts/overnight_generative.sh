@@ -3,6 +3,7 @@
 #   bash scripts/overnight_generative.sh            # defaults: efficientnet_b0, seed 0
 #   MODEL=resnet50 SEED=1 bash scripts/overnight_generative.sh
 # Everything is also written to logs/overnight_<date>.log.
+# Resumable: finished stages, CVAE groups and E3/E4 runs are skipped on re-run.
 set -uo pipefail
 cd "$(dirname "$0")/.."
 MODEL=${MODEL:-efficientnet_b0}
@@ -38,7 +39,7 @@ fi
 if [ -f data/generated/cvae/manifest.csv ]; then
   stage 3 "CVAE: already generated, skipping training + sampling"
 else
-  stage 3 "CVAE: train one model per crop group, then sample 500 field-style images per class"
+  stage 3 "CVAE: train one model per crop group (finished groups are skipped), then sample 500 field-style images per class"
   python -m src.train_cvae || fail 3 "CVAE training"
   python -m src.generate cvae || fail 3 "CVAE sampling"
 fi
@@ -48,6 +49,8 @@ python -m src.fid || fail 4 "FID"
 
 stage 5 "E3 (+CycleGAN) and E4 (+CVAE): $MODEL seed $SEED"
 for c in e3_cyclegan e4_cvae; do
+  done_file="runs/${c%%_*}/$MODEL/seed$SEED/metrics.json"
+  if [ -f "$done_file" ]; then echo "[$c] already finished ($done_file), skipping"; continue; fi
   python -m src.train --config configs/experiments/$c.yaml model=$MODEL seed=$SEED || fail 5 "$c"
 done
 
