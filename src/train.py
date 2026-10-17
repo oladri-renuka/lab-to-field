@@ -10,9 +10,12 @@ peak GPU memory, fraction of step time spent waiting on the data loader.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import math
 import os
 import time
+from pathlib import Path
 
 import torch
 import torch.distributed as dist
@@ -24,7 +27,7 @@ from timm.optim import create_optimizer_v2
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 
-from src.data.datasets import build_train_dataset
+from src.data.datasets import build_train_dataset, manifest_path
 from src.data.transforms import eval_transform, train_transform
 from src.eval import evaluate_run, make_loader, predict
 from src.models.classifier import build_classifier, norm_stats
@@ -105,15 +108,37 @@ def main() -> None:
         run(cfg)
 
 
-def run(cfg) -> None:
+def config_hash(cfg) -> str:
+    c = OmegaConf.to_container(cfg, resolve=True)
+    c.pop("overwrite", None)
+    return hashlib.sha256(json.dumps(c, sort_keys=True, default=str).encode()).hexdigest()[:12]
 
+
+def claim_run_dir(cfg, out_dir: Path) -> None:
+    """Fail loudly instead of silently mixing two runs in one directory."""
+    h, overwrite = config_hash(cfg), bool(cfg.get("overwrite", False))
+    hash_file = out_dir / "config_hash.txt"
+    if not overwrite:
+        if (out_dir / "metrics.json").exists():
+            raise RuntimeError(f"{out_dir} already holds a finished run. Move it away, or pass overwrite=true to replace it.")
+        if hash_file.exists() and hash_file.read_text().strip() != h:
+            raise RuntimeError(f"{out_dir} holds an unfinished run with a different config "
+                               f"({hash_file.read_text().strip()} vs {h}). Move it away, or pass overwrite=true.")
+    else:
+        for f in list(out_dir.glob("metrics*.json")) + list(out_dir.glob("best*.pt")) + list(out_dir.glob("preds_*.npz")):
+            f.unlink()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    hash_file.write_text(h)
+    OmegaConf.save(cfg, out_dir / "config.yaml")
+
+
+def run(cfg) -> None:
     rank, world, device = setup_distributed()
     is_main = rank == 0
     steps_log = Steps("train", 5, enabled=is_main)
     out_dir = run_dir(cfg)
     if is_main:
-        out_dir.mkdir(parents=True, exist_ok=True)
-        OmegaConf.save(cfg, out_dir / "config.yaml")
+        claim_run_dir(cfg, out_dir)
 
     seed_everything(cfg.seed, cfg.train.deterministic)  # identical model init on every rank
     classes = load_classes(cfg.paths.processed_dir)
@@ -141,7 +166,14 @@ def run(cfg) -> None:
                         persistent_workers=cfg.data.num_workers > 0, worker_init_fn=seed_worker, generator=g)
     if len(loader) == 0:
         raise ValueError(f"train set ({len(train_ds)}) smaller than one batch ({bs})")
-    val_loader = make_loader(cfg, "pd_val", eval_transform(cfg.data.img_size, mean, std))
+    # Validation: PlantDoc val always; PlantVillage (lab) val when available. `train.select_on` picks the one that
+    # drives best.pt + early stopping; the other's best checkpoint is kept as best_<name>.pt for a secondary report.
+    val_names = ["pd_val"] + (["pv_val"] if manifest_path(cfg, "pv_val").exists() else [])
+    select_on = str(cfg.train.select_on)
+    if select_on not in val_names:
+        raise ValueError(f"train.select_on={select_on} but available val sets are {val_names} (re-run src.data.prepare)")
+    etf = eval_transform(cfg.data.img_size, mean, std)
+    val_loaders = {n: make_loader(cfg, n, etf) for n in val_names}
 
     global_batch = bs * world
     lr = mcfg.lr * cfg.train.lr_mult * (global_batch / cfg.train.base_batch if cfg.train.scale_lr else 1.0)
@@ -166,11 +198,13 @@ def run(cfg) -> None:
 
     logger = RunLogger(cfg, f"{cfg.exp_id}/{cfg.model}/seed{cfg.seed}", enabled=is_main)
     steps_log(f"training {cfg.exp_id} | {cfg.model} | seed {cfg.seed} | train={len(train_ds)} imgs, "
-              f"{len(loader)} batches/epoch | val={len(val_loader.dataset)} | up to {cfg.train.epochs} epochs, "
-              f"early stop after {cfg.train.early_stop_patience} without val gain | global batch {global_batch}, "
+              f"{len(loader)} batches/epoch | val: " + ", ".join(f"{n}={len(v.dataset)}" for n, v in val_loaders.items())
+              + f" | selecting on {select_on} | up to {cfg.train.epochs} epochs, "
+              f"early stop after {cfg.train.early_stop_patience} without {select_on} gain | global batch {global_batch}, "
               f"lr {lr:.2e}, {cfg.train.precision} | output {out_dir}")
 
     best_acc, best_epoch, bad_epochs, history = -1.0, -1, 0, []
+    best_other = {n: -1.0 for n in val_names if n != select_on}
     for epoch in range(cfg.train.epochs):
         if sampler is not None:
             sampler.set_epoch(epoch)
@@ -192,21 +226,31 @@ def run(cfg) -> None:
 
         stop = torch.zeros(1, device=device)
         if is_main:
-            probs, labels = predict(core, val_loader, device, amp_dtype, desc=f"epoch {epoch + 1} val")
-            val_acc = float((probs.argmax(1) == labels).mean())
+            accs = {}
+            for n, vl in val_loaders.items():
+                probs, labels = predict(core, vl, device, amp_dtype, desc=f"epoch {epoch + 1} {n}")
+                accs[n] = float((probs.argmax(1) == labels).mean())
+            val_acc = accs[select_on]
             stats.update(epoch=epoch, val_acc=val_acc, lr=sched.get_last_lr()[0],
-                         images_per_sec_global=stats["images_per_sec"] * world)
+                         images_per_sec_global=stats["images_per_sec"] * world, **{f"val_{n}": a for n, a in accs.items()})
             history.append(stats)
             logger.log(stats, step=epoch)
+            ckpt = {"model": core.state_dict(), "cfg": OmegaConf.to_container(cfg), "classes": classes,
+                    "epoch": epoch, "val_acc": val_acc, "val": accs, "selected_on": select_on}
+            for n in best_other:
+                if accs[n] > best_other[n]:
+                    best_other[n] = accs[n]
+                    torch.save({**ckpt, "val_acc": accs[n], "selected_on": n}, out_dir / f"best_{n}.pt")
             if val_acc > best_acc:
                 best_acc, best_epoch, bad_epochs = val_acc, epoch, 0
-                torch.save({"model": core.state_dict(), "cfg": OmegaConf.to_container(cfg), "classes": classes,
-                            "epoch": epoch, "val_acc": val_acc}, out_dir / "best.pt")
+                torch.save(ckpt, out_dir / "best.pt")
                 note = "new best, saved"
             else:
                 bad_epochs += 1
                 note = f"no gain {bad_epochs}/{cfg.train.early_stop_patience} (best {best_acc:.4f} @ {best_epoch + 1})"
-            print(f"[epoch {epoch + 1:>2}/{cfg.train.epochs}] loss={stats['train_loss']:.4f} val_acc={val_acc:.4f} "
+            others = " ".join(f"{n}={a:.4f}" for n, a in accs.items() if n != select_on)
+            print(f"[epoch {epoch + 1:>2}/{cfg.train.epochs}] loss={stats['train_loss']:.4f} {select_on}={val_acc:.4f}"
+                  + (f" ({others})" if others else "") + " "
                   f"| {note} | {stats['epoch_time_s']:.0f}s, {stats['images_per_sec_global']:.0f} img/s, "
                   f"data_wait={stats['data_wait_frac']:.2f}, mem={stats['peak_mem_gb']:.1f}GB | t+{steps_log.elapsed()}",
                   flush=True)
@@ -219,14 +263,18 @@ def run(cfg) -> None:
             break
 
     if is_main:
-        save_json({"history": history, "best_epoch": best_epoch, "best_val_acc": best_acc, "world_size": world,
-                   "global_batch": global_batch, "lr": lr}, out_dir / "train_log.json")
-        steps_log(f"evaluating best checkpoint (epoch {best_epoch + 1}, val_acc {best_acc:.4f}) on PlantDoc test + PlantVillage test")
+        save_json({"history": history, "best_epoch": best_epoch, "best_val_acc": best_acc, "selected_on": select_on,
+                   "world_size": world, "global_batch": global_batch, "lr": lr}, out_dir / "train_log.json")
+        steps_log(f"evaluating best checkpoint (epoch {best_epoch + 1}, {select_on} {best_acc:.4f}) on PlantDoc test + "
+                  f"PlantVillage test" + (f"; also the best-{', '.join(best_other)} checkpoint (secondary)" if best_other else ""))
         m = evaluate_run(out_dir, device=str(device))
+        for n in best_other:
+            m2 = evaluate_run(out_dir, device=str(device), ckpt=f"best_{n}.pt", out_name=f"metrics_{n}_selected.json")
+            print(f"[test, secondary: selected on {n}] PD acc={m2['pd_test']['acc']:.4f} | PV acc={m2['pv_test']['acc']:.4f}")
         logger.log({"pd_test_acc": m["pd_test"]["acc"], "pv_test_acc": m["pv_test"]["acc"], "gap": m["gap"],
                     "pd_test_macro_f1": m["pd_test"]["macro_f1"], "pd_test_ece": m["pd_test"]["ece"]}, step=epoch + 1)
         lo, hi = m["pd_test"]["acc_ci95"]
-        print(f"[test] PD acc={m['pd_test']['acc']:.4f} (95% CI {lo:.3f}-{hi:.3f}) macro-F1={m['pd_test']['macro_f1']:.4f} "
+        print(f"[test, selected on {select_on}] PD acc={m['pd_test']['acc']:.4f} (95% CI {lo:.3f}-{hi:.3f}) macro-F1={m['pd_test']['macro_f1']:.4f} "
               f"| PV acc={m['pv_test']['acc']:.4f} | gap={m['gap']:.4f}")
         logger.finish()
         steps_log(f"saved best.pt, metrics.json, train_log.json in {out_dir}")

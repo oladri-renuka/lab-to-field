@@ -18,6 +18,7 @@ data:
   img_size: 224
   num_workers: 8
   val_frac: 0.2                # carved from PlantDoc train, stratified
+  pv_val_frac: 0.1             # lab-only val, carved from PlantVillage train, grouped by physical leaf
   split_seed: 0                # fixed: the val split never changes across training seeds
   dedup_hamming: 4             # perceptual-hash Hamming distance for near-duplicates
   train_sources: [pv_color]    # pv_color | pv_composite | cyclegan | cvae | pd_fewshot | pd_train
@@ -57,7 +58,9 @@ train:
   weight_decay: 0.05
   label_smoothing: 0.1
   min_lr_ratio: 0.0
-  early_stop_patience: 8       # epochs without PlantDoc-val improvement
+  early_stop_patience: 8       # epochs without improvement on the selection val set
+  select_on: pd_val            # pd_val | pv_val. Lab-only experiments (E0-E4) override to pv_val: their headline
+                               # checkpoint uses no field data; the pd_val-selected one is reported as secondary.
   precision: bf16              # fp32 | bf16
   grad_checkpointing: false
   init_from: null
@@ -78,5 +81,6 @@ logging:
 
 eval:
   batch_size: 256
+  secondary_pool: false        # also test on PlantDoc train (only valid for models that never saw it: E0, E1)
   ece_bins: 15
   bootstrap: 1000

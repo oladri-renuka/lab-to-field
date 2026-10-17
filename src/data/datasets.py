@@ -95,7 +95,15 @@ def source_frame(cfg: DictConfig, source: str, seed: int) -> pd.DataFrame:
         return read_manifest(cfg, "pv_train")
     if source == "pv_composite":
         return read_manifest(cfg, "pv_seg_train")
-    if source in ("cyclegan", "cvae", "pd_train"):
+    if source == "cyclegan":
+        # Translations exist for every image that was in PlantVillage train when they were generated; keep only those
+        # whose source is still in the current train split (never a lab-val/test leaf).
+        gen = read_manifest(cfg, "cyclegan")
+        train = read_manifest(cfg, "pv_train")
+        keep = set(zip(train.class_name, train.path.map(lambda x: Path(x).stem)))
+        mask = [k in keep for k in zip(gen.class_name, gen.path.map(lambda x: Path(x).stem))]
+        return gen[mask].reset_index(drop=True)
+    if source in ("cvae", "pd_train"):
         return read_manifest(cfg, source)
     if source == "pd_fewshot":
         if not cfg.data.fewshot_k:

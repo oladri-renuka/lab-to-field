@@ -4,10 +4,10 @@
 > lab-to-field gap for EfficientNet-B0 (gap **A → B** points, PlantDoc test, N shared classes, 3 seeds); ten real
 > field photos per class (E5, k=10) close **Y%**." Fill it in from `reports/results.md`; don't estimate.
 
-![Lab-to-field gap per experiment](reports/figures/gap.png)
+![PlantDoc accuracy per experiment](reports/figures/pd_acc.png)
 
-*Gap = PlantVillage-test accuracy − PlantDoc-test accuracy on the shared classes. Lower is better. Mean ± std over 3 seeds.
-Created by `python -m src.report`.*
+*Headline metric: **PlantDoc (field) test accuracy**, mean ± std over 3 seeds; `reports/figures/pd_acc.png`. The lab−field gap is reported
+secondary: fine-tuning on field images also lowers lab accuracy, which shrinks the gap without any field improvement. Created by `python -m src.report`.*
 
 ## How to run (3 commands)
 
@@ -135,6 +135,27 @@ A FastAPI service with a Dockerfile is in `serve/`.
 - Seeds are fixed: Python, NumPy, torch and DataLoader workers. The PlantDoc-val split uses its own fixed seed, so it's the same for all runs. Few-shot draws vary with the training seed.
 - Runs log to MLflow (`mlflow.db`; view with `mlflow ui --backend-store-uri sqlite:///mlflow.db`). Switch to W&B with `logging.backend=wandb`.
 - `pytest` covers metrics, splits, the class map, configs, model shapes and sizes, compositing, dedup, and an end-to-end CPU smoke test (train → eval → fine-tune → report) on synthetic images.
+
+## Evaluation protocol (and how it departs from the brief)
+
+- **Headline = PlantDoc test accuracy**, not the gap (see above). The gap is still reported in every table.
+- **Checkpoint selection without field data for lab-only rows.** The brief early-stops on PlantDoc val, which lets
+  field labels pick the "lab-only" checkpoint. E0–E4 therefore select on a **PlantVillage val** split (10% of
+  PlantVillage train, grouped by physical leaf). The PlantDoc-val-selected checkpoint is still evaluated and shown as
+  an optimistic secondary column. E5–E7 use field labels for training anyway, so they select on PlantDoc val.
+- **What each row actually uses from PlantDoc:** E0/E1 nothing; E2 unlabeled PlantDoc-train crops (backgrounds);
+  E3 unlabeled PlantDoc-train images (CycleGAN field domain); **E4 PlantDoc-train labels** (the CVAE is class-conditioned);
+  E5/E6 k labeled images per class; E7 all of PlantDoc train. No generator, background pool or calibration set ever
+  touches PlantDoc val or test.
+- **Small test set.** 236 images (~9 per class): per-class recall is reported but is noise-level. Every test label
+  was reviewed by hand (`reports/audit/test_label_review.csv`); accuracy on the reviewed labels is reported alongside.
+- **Significance.** Experiments are compared on the same test images with a paired bootstrap (primary) and exact
+  McNemar (supplementary), **Holm-corrected** across all comparisons (`reports/paired_tests.csv`). Differences under
+  ~5 points are generally not detectable with 236 images.
+- **Secondary field test for E0/E1.** These never see a PlantDoc pixel, so they are also scored on the ~1.9k PlantDoc
+  train images (labelled *secondary* in the results). E2–E4 are excluded because their augmentation used those images.
+- **Chance levels** for the background-only test: uniform 1/27 = 0.037; **majority-class baseline 0.156** (the
+  largest PlantVillage test class); the latter is the relevant baseline.
 
 ## Design decisions and deviations from the brief
 

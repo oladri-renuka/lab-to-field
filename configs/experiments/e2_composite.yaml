@@ -2,3 +2,5 @@ _base_: ../base.yaml
 exp_id: e2
 data:
   train_sources: [pv_color, pv_composite]
+train:
+  select_on: pv_val            # selection uses no field data; training uses UNLABELED PlantDoc-train crops as backgrounds

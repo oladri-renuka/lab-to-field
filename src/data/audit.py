@@ -11,6 +11,7 @@ Sections:
   stats   lab vs field pixel statistics: channel mean/std, brightness, blur (Laplacian variance)
   seg     segmented <-> color pairing, mask quality, lesions cut away by the segmentation (repair gain)
   labels  contact sheets for manual label review (20 PlantDoc / 10 PlantVillage per class) + CSV template
+  testlabels  EVERY PlantDoc test image, per class, for a full manual review of the 236 test labels
 The background-only shortcut classifier is a separate experiment: `python -m src.shortcut`.
 """
 from __future__ import annotations
@@ -31,11 +32,12 @@ from PIL import Image, ImageDraw
 from src.data.composite import binary_leaf_mask
 from src.data.dedup import nearest
 from src.data.io import load_image
+from src.data.leaf import leaf_id, load_leaf_map
 from src.metrics import bootstrap_accuracy_ci
 from src.utils import Steps, load_config, progress
 
 OUT = Path("reports/audit")
-SECTIONS = ["leaf", "counts", "files", "stats", "seg", "labels"]
+SECTIONS = ["leaf", "counts", "files", "stats", "seg", "labels", "testlabels"]
 
 
 def manifests(cfg) -> dict[str, pd.DataFrame]:
@@ -44,30 +46,10 @@ def manifests(cfg) -> dict[str, pd.DataFrame]:
 
 
 # ---------------------------------------------------------------- leaf grouping
-def leaf_id(rel: str, leaf_map: dict) -> str:
-    """Replicates the HF repo's loader (plant_village.py) leaf-id logic."""
-    _, _, cls, name = rel.split("/")[:4]
-    ident = name.replace("_final_masked", "")
-    if "___" in ident:
-        ident = ident.split("___")[-1]
-    ident = ident.split("copy")[0]
-    for ext in (".jpg", ".JPG", ".png", ".PNG"):
-        ident = ident.replace(ext, "")
-    ident = ident.strip()
-    sugg = leaf_map.get(ident.lower().strip())
-    if not sugg:
-        return f"fallback_{ident}"
-    if len(sugg) == 1:
-        return sugg[0]
-    return next((s for s in sugg if cls in s), f"fallback_{ident}")
-
-
 def section_leaf(cfg) -> str:
-    from huggingface_hub import hf_hub_download
-
     from src.data.prepare import split_list
 
-    leaf_map = json.loads(Path(hf_hub_download(cfg.data.hf_id, "leaf_grouping/leaf-map.json", repo_type="dataset")).read_text())
+    leaf_map = load_leaf_map(cfg.data.hf_id)
     ids = {s: pd.Series([leaf_id(r, leaf_map) for r in split_list(cfg, "color", s)]) for s in ("train", "test")}
     real = {s: v[~v.str.startswith("fallback_")] for s, v in ids.items()}
     shared = set(real["train"]) & set(real["test"])
@@ -347,6 +329,28 @@ def section_labels(cfg) -> str:
     )
 
 
+def section_testlabels(cfg) -> str:
+    """All PlantDoc test images: with ~9 per class, a few wrong labels move the headline numbers."""
+    test = manifests(cfg)["pd_test"]
+    d = OUT / "labels" / "plantdoc_test_all"
+    d.mkdir(parents=True, exist_ok=True)
+    rows = []
+    for cls, g in progress(test.groupby("class_name"), "test-label sheets", total=test.class_name.nunique()):
+        paths = g.path.tolist()
+        _sheet(paths, f"PlantDoc TEST: {cls}  ({len(paths)} images)", d / f"{cls.replace(' ', '_')}.jpg", tile=200, cols=4)
+        rows += [{"class_name": cls, "tile": i, "path": p, "correct": "", "corrected_class": ""} for i, p in enumerate(paths)]
+    review = OUT / "test_label_review.csv"
+    if not review.exists():  # never overwrite a review in progress
+        pd.DataFrame(rows).to_csv(review, index=False)
+    return (
+        "## 4c. Full PlantDoc test-label review\n\n"
+        f"All {len(test)} test images: `reports/audit/labels/plantdoc_test_all/<class>.jpg`. In `test_label_review.csv` set "
+        "`correct` to 1 (label right) or 0 (wrong). For a wrong one, put the right class name (exactly as in "
+        "`data/processed/classes.json`) in `corrected_class`, or leave it empty if the image fits no class / is unusable. "
+        "`python -m src.report` then adds accuracy on the reviewed labels, using saved predictions (no re-training).\n"
+    )
+
+
 def score_labels() -> None:
     df = pd.read_csv(OUT / "label_review.csv")
     df = df[df.correct.astype(str).isin(["0", "1", "0.0", "1.0"])]
@@ -379,10 +383,12 @@ def main() -> None:
     cfg = load_config(args.config, args.overrides)
     run = {"leaf": lambda: section_leaf(cfg), "counts": lambda: section_counts(cfg),
            "files": lambda: section_files(cfg, args.workers), "stats": lambda: section_stats(cfg, args.workers),
-           "seg": lambda: section_seg(cfg, args.workers), "labels": lambda: section_labels(cfg)}
+           "seg": lambda: section_seg(cfg, args.workers), "labels": lambda: section_labels(cfg),
+           "testlabels": lambda: section_testlabels(cfg)}
     what = {"leaf": "PlantVillage leaf grouping (leaf ids + pHash)", "counts": "class counts",
             "files": "verifying every file (formats, modes, EXIF, sizes)", "stats": "lab vs field pixel statistics",
-            "seg": "segmented masks (pairing, quality, lesion repair)", "labels": "label-review contact sheets"}
+            "seg": "segmented masks (pairing, quality, lesion repair)", "labels": "label-review contact sheets",
+            "testlabels": "full PlantDoc test-label review sheets"}
     step = Steps("audit", len(args.only))
     for name in args.only:
         step(f"{name}: {what[name]}")

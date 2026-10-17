@@ -3,3 +3,5 @@ _base_: ../base.yaml
 exp_id: e4
 data:
   train_sources: [pv_color, cvae]
+train:
+  select_on: pv_val            # selection uses no field data; but the CVAE is class-conditioned on LABELED PlantDoc-train images

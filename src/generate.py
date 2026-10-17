@@ -38,7 +38,8 @@ def gen_cyclegan(cfg, dev, batch: int = 32) -> pd.DataFrame:
             path = out_dir / normalize(r.class_name) / f"{Path(r.path).stem}.jpg"
             path.parent.mkdir(parents=True, exist_ok=True)
             save_image(img, path)
-            rows.append({"path": str(path), "label": r.label, "class_name": r.class_name, "source": "cyclegan"})
+            rows.append({"path": str(path), "label": r.label, "class_name": r.class_name, "source": "cyclegan",
+                         "source_path": r.path})
     return pd.DataFrame(rows)
 
 

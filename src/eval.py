@@ -46,23 +46,37 @@ def load_checkpoint(path: str | Path, device="cpu"):
     return model.to(device), cfg, ckpt
 
 
-def evaluate_run(run: str | Path, splits=("pd_test", "pv_test"), device=None) -> dict:
+def evaluate_run(run: str | Path, splits=("pd_test", "pv_test"), device=None, ckpt: str = "best.pt",
+                 out_name: str = "metrics.json") -> dict:
+    """Evaluate one checkpoint of a run. Also saves per-image PlantDoc predictions (preds_<tag>.npz) for paired tests
+    and for re-scoring after the manual test-label review, without re-running the model."""
     run = Path(run)
     device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    model, cfg, ckpt = load_checkpoint(run / "best.pt", device)
-    classes = ckpt["classes"]
+    model, cfg, state = load_checkpoint(run / ckpt, device)
+    classes = state["classes"]
     tf = eval_transform(cfg.data.img_size, *norm_stats(model))
     amp = torch.bfloat16 if (device.type == "cuda" and cfg.train.precision == "bf16") else None
+    splits = list(splits)
+    if cfg.eval.get("secondary_pool", False) and "pd_pool" not in splits:
+        splits.append("pd_pool")  # PlantDoc train split as a bigger, secondary field test (models that never saw it)
 
-    out = {"exp_id": cfg.exp_id, "model": cfg.model, "seed": int(cfg.seed), "best_epoch": ckpt["epoch"],
-           "pd_val_acc": ckpt["val_acc"], "n_classes": len(classes)}
+    val = state.get("val", {"pd_val": state["val_acc"]})
+    out = {"exp_id": cfg.exp_id, "model": cfg.model, "seed": int(cfg.seed), "best_epoch": state["epoch"],
+           "selected_on": state.get("selected_on", "pd_val"), "val_acc": val, "pd_val_acc": val.get("pd_val"),
+           "n_classes": len(classes), "checkpoint": ckpt}
+    tag = Path(out_name).stem.replace("metrics", "").strip("_") or "primary"
     for split in splits:
-        probs, labels = predict(model, make_loader(cfg, split, tf), device, amp, desc=f"test {split}")
+        manifest = "pd_train" if split == "pd_pool" else split
+        loader = make_loader(cfg, manifest, tf)
+        probs, labels = predict(model, loader, device, amp, desc=f"test {split}")
         out[split] = classification_metrics(probs, labels, classes, cfg.eval.ece_bins,
-                                            cfg.eval.bootstrap if split == "pd_test" else 0)
+                                            cfg.eval.bootstrap if split in ("pd_test", "pd_pool") else 0)
+        if split in ("pd_test", "pd_pool"):
+            np.savez_compressed(run / f"preds_{tag}_{split}.npz", probs=probs.astype(np.float32), labels=labels,
+                                paths=np.array(loader.dataset.paths, dtype=str))
     if "pd_test" in out and "pv_test" in out:
         out["gap"] = out["pv_test"]["acc"] - out["pd_test"]["acc"]
-    save_json(out, run / "metrics.json")
+    save_json(out, run / out_name)
     return out
 
 
@@ -70,8 +84,10 @@ def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", required=True, help="run directory containing best.pt")
     ap.add_argument("--splits", nargs="+", default=["pd_test", "pv_test"])
+    ap.add_argument("--ckpt", default="best.pt")
+    ap.add_argument("--out", default="metrics.json")
     args = ap.parse_args()
-    m = evaluate_run(args.run, args.splits)
+    m = evaluate_run(args.run, args.splits, ckpt=args.ckpt, out_name=args.out)
     for s in args.splits:
         print(f"{s}: acc={m[s]['acc']:.4f} macro_f1={m[s]['macro_f1']:.4f} ece={m[s]['ece']:.4f}")
     if "gap" in m:

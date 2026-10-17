@@ -1,6 +1,7 @@
 """Build all manifests from the raw datasets. Run once: `python -m src.data.prepare`.
 
-1. PlantVillage (HF repo data.zip): official leaf-grouped color split lists, shared classes only.
+1. PlantVillage (HF repo data.zip): official leaf-grouped color split lists, shared classes only; a 10% leaf-grouped
+   lab-only val split is carved from train (checkpoint selection for experiments that use no field labels).
    Compositing leaves (segmented) are taken only for color-*train* images, so no test leaf leaks into E2.
 2. PlantDoc: map folders through configs/class_map.csv, drop files that fail to decode.
 3. Contamination: drop every PlantDoc image (any split) within pHash distance <= d of ANY PlantVillage image.
@@ -21,6 +22,7 @@ from src.data.class_map import load_class_map, mapped_plantvillage_classes, norm
 from src.data.datasets import IMG_EXTS
 from src.data.dedup import matches, phash
 from src.data.io import load_image
+from src.data.leaf import grouped_val_split, leaf_groups, load_leaf_map
 from src.data.splits import stratified_val_split
 from src.utils import Steps, load_config, progress, save_json
 
@@ -118,8 +120,16 @@ def plantvillage_frames(cfg, base: Path, wanted: dict[str, str]) -> tuple[dict[s
     shared = all_color[all_color.class_name.notna()]
     out = {s: shared[shared.split == s][["path", "class_name"]].assign(source="pv_color") for s in ("train", "test")}
 
+    # Lab-only validation set: leaf-grouped, stratified carve-out of PlantVillage train. Lets lab-only experiments
+    # select checkpoints without touching any field image.
+    shared_train = shared[shared.split == "train"].reset_index(drop=True)
+    groups = leaf_groups(shared_train.rel.tolist(), load_leaf_map(cfg.data.hf_id))
+    tr, va = grouped_val_split(shared_train, groups, float(cfg.data.pv_val_frac), int(cfg.data.split_seed))
+    out["train"] = tr[["path", "class_name"]].assign(source="pv_color")
+    out["val"] = va[["path", "class_name"]].assign(source="pv_color")
+
     seg_rows = []
-    for r in shared[shared.split == "train"].itertuples():
+    for r in tr.itertuples():  # compositing leaves only from the (reduced) train split
         rel = seg_index.get(r.rel)
         if rel and (base / rel).exists():
             seg_rows.append({"path": str(base / rel), "class_name": r.class_name, "source": "pv_segmented",
@@ -214,6 +224,13 @@ def main() -> None:
     leaked = {all_color.path.iloc[i] for i, _, _ in pv_leak}
     n_before = len(pv["test"])
     pv["test"] = pv["test"][~pv["test"].path.isin(leaked)]
+    # Same rule for the new lab val split vs the reduced lab train split.
+    path_idx = {pth: i for i, pth in enumerate(all_color.path)}
+    va_i = np.array([path_idx[pth] for pth in pv["val"].path])
+    tr_i = np.array([path_idx[pth] for pth in pv["train"].path])
+    val_dups = {pv["val"].path.iloc[i] for i, _, _ in matches(pv_hash[va_i], pv_hash[tr_i], d)}
+    pv["val"] = pv["val"][~pv["val"].path.isin(val_dups)]
+    print(f"[pv-dedup] PlantVillage val images near-identical to a train image, removed: {len(val_dups)}")
     print(f"[pv-dedup] PlantVillage test images near-identical to a train image (hamming <= {d}): {len(pv_leak)} "
           f"(all classes); removed from shared-class test: {n_before - len(pv['test'])}")
 
@@ -260,6 +277,7 @@ def main() -> None:
                                             float(cfg.data.val_frac), int(cfg.data.split_seed))
     out = {
         "pv_train": finalize(pv["train"]),
+        "pv_val": finalize(pv["val"]),
         "pv_test": finalize(pv["test"]),
         "pv_seg_train": finalize(pv["seg_train"]),
         "pd_train": pd_train,

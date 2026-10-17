@@ -3,3 +3,5 @@ _base_: ../base.yaml
 exp_id: e3
 data:
   train_sources: [pv_color, cyclegan]
+train:
+  select_on: pv_val            # selection uses no field data; CycleGAN saw UNLABELED PlantDoc-train images

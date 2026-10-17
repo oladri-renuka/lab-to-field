@@ -43,7 +43,7 @@ def run(args, cwd):
 def test_pipeline(tmp_path):
     proc = tmp_path / "processed"
     (proc / "manifests").mkdir(parents=True)
-    for name, n, seg in [("pv_train", 8, False), ("pv_seg_train", 8, True), ("pv_test", 4, False),
+    for name, n, seg in [("pv_train", 8, False), ("pv_seg_train", 8, True), ("pv_val", 3, False), ("pv_test", 4, False),
                          ("pd_train", 6, False), ("pd_val", 3, False), ("pd_test", 4, False)]:
         make_split(proc, name, n, seg)
     (proc / "classes.json").write_text(json.dumps({"classes": CLASSES}))
@@ -53,12 +53,23 @@ def test_pipeline(tmp_path):
               "data.num_workers=0", "logging.backend=none", "eval.batch_size=8", "eval.bootstrap=50",
               "composite.canvas=64"]
     run(["src.train", "--config", str(ROOT / "configs/experiments/e2_composite.yaml"), *common], tmp_path)
-    m = json.loads((tmp_path / "runs/e2/efficientnet_b0/seed0/metrics.json").read_text())
+    run_e2 = tmp_path / "runs/e2/efficientnet_b0/seed0"
+    m = json.loads((run_e2 / "metrics.json").read_text())
     assert {"pd_test", "pv_test", "gap"} <= m.keys() and m["n_classes"] == 3
+    assert m["selected_on"] == "pv_val" and (run_e2 / "metrics_pd_val_selected.json").exists()
+    assert (run_e2 / "preds_primary_pd_test.npz").exists()
+
+    # a second run into a finished run directory must fail loudly
+    env = {**os.environ, "PYTHONPATH": str(ROOT)}
+    r = subprocess.run([sys.executable, "-m", "src.train", "--config", str(ROOT / "configs/experiments/e2_composite.yaml"),
+                        *common], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert r.returncode != 0 and "already holds a finished run" in r.stderr
 
     run(["src.train", "--config", str(ROOT / "configs/experiments/e5_fewshot.yaml"), *common,
          "data.fewshot_k=3", "train.init_from=" + str(tmp_path / "runs/e2/efficientnet_b0/seed0/best.pt")], tmp_path)
+    run(["src.train", "--config", str(ROOT / "configs/experiments/e0_baseline.yaml"), *common], tmp_path)
     assert (tmp_path / "runs/e5_k3/efficientnet_b0/seed0/metrics.json").exists()
 
     out = run(["src.report", "--runs", str(tmp_path / "runs")], tmp_path)
-    assert "e5_k3" in out and (tmp_path / "reports/figures/gap.png").exists()
+    assert "e5_k3" in out and (tmp_path / "reports/figures/pd_acc.png").exists()
+    assert "Paired comparisons" in out

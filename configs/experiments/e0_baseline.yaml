@@ -2,3 +2,7 @@ _base_: ../base.yaml
 exp_id: e0
 data:
   train_sources: [pv_color]
+train:
+  select_on: pv_val            # lab-only: no field data in training or checkpoint selection
+eval:
+  secondary_pool: true         # never sees PlantDoc pixels, so PlantDoc train is a valid extra test pool
