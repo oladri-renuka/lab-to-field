@@ -1,0 +1,9 @@
+log: logs/overnight_1016_2237.log | model=efficientnet_b0 seed=0
+
+######## [stage 1/6] CycleGAN: already generated, skipping training + translation   (started 22:37:01, total elapsed 0h00m) ########
+
+######## [stage 3/6] CVAE: train one model per crop group, then sample 500 field-style images per class   (started 22:37:01, total elapsed 0h00m) ########
+[cvae 1/13] group 'Apple': 3 classes, 2280 images (field=195), 60 epochs (t+0:01)
+Apple epoch 1/60:   0%|          | 0/17 [00:00<?, ?batch/s]scripts/overnight_generative.sh: line 44: 39286 Killed                  python -m src.train_cvae
+
+!!!!!!!! FAILED at stage 3: CVAE training -- see logs/overnight_1016_2237.log

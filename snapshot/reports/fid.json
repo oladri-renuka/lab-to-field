@@ -1,0 +1,7 @@
+{
+  "reference_plantvillage": 123.6604232788086,
+  "cyclegan": 96.36394500732422,
+  "cvae": 275.15740966796875,
+  "n": 2000,
+  "real": "pd_train"
+}
