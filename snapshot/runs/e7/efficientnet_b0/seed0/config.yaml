@@ -14,6 +14,7 @@ data:
   img_size: 224
   num_workers: 8
   val_frac: 0.2
+  pv_val_frac: 0.1
   split_seed: 0
   dedup_hamming: 4
   train_sources:
@@ -41,6 +42,7 @@ composite:
   bg_crop_scale:
   - 0.15
   - 0.6
+  bg_max_side: 512
   mask_threshold: 12
   mask_repair: 7
 models:
@@ -64,6 +66,7 @@ train:
   label_smoothing: 0.1
   min_lr_ratio: 0.0
   early_stop_patience: 8
+  select_on: pd_val
   precision: bf16
   grad_checkpointing: false
   init_from: null
@@ -81,5 +84,6 @@ logging:
   project: crop-disease-lab2field
 eval:
   batch_size: 256
+  secondary_pool: false
   ece_bins: 15
   bootstrap: 1000

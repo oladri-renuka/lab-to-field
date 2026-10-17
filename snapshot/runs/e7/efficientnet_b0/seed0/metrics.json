@@ -3,8 +3,14 @@
   "model": "efficientnet_b0",
   "seed": 0,
   "best_epoch": 12,
+  "selected_on": "pd_val",
+  "val_acc": {
+    "pd_val": 0.6,
+    "pv_val": 0.34295652173913044
+  },
   "pd_val_acc": 0.6,
   "n_classes": 27,
+  "checkpoint": "best.pt",
   "pd_test": {
     "n": 236,
     "n_classes_present": 27,
