@@ -33,7 +33,7 @@ for d in runs runs_exploratory; do
 done
 [ -d reports ] && cp -r reports "$DST/snapshot/"
 [ -d logs ] && cp -r logs "$DST/snapshot/"
-[ -f mlflow.db ] && cp mlflow.db "$DST/snapshot/"
+# mlflow.db is not pushed: binary SQLite trips GitHub secret scanning (false positives) and every number is in the JSON files.
 [ -f data/processed/classes.json ] && mkdir -p "$DST/snapshot/data" && cp data/processed/classes.json data/processed/*.json "$DST/snapshot/data/" 2>/dev/null || true
 
 cd "$DST"
