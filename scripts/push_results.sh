@@ -38,10 +38,14 @@ done
 
 cd "$DST"
 git add -A snapshot
-if git diff --cached --quiet; then
+if ! git diff --cached --quiet; then
+  git commit -q -m "Results snapshot $(date '+%Y-%m-%d %H:%M')"
+fi
+# Push whenever the local branch is ahead (also retries an earlier commit whose push failed).
+if git ls-remote --exit-code --heads origin results >/dev/null 2>&1 \
+   && [ "$(git rev-parse HEAD)" = "$(git ls-remote origin refs/heads/results | cut -f1)" ]; then
   echo "[push-results] $(date '+%H:%M:%S') nothing new"
   exit 0
 fi
-git commit -q -m "Results snapshot $(date '+%Y-%m-%d %H:%M')"
-git push -q origin results
+git push -q -u origin results
 echo "[push-results] $(date '+%H:%M:%S') pushed $(git rev-parse --short HEAD) to the results branch"
