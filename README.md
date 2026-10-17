@@ -154,6 +154,13 @@ A FastAPI service with a Dockerfile is in `serve/`.
   ~5 points are generally not detectable with 236 images.
 - **Secondary field test for E0/E1.** These never see a PlantDoc pixel, so they are also scored on the ~1.9k PlantDoc
   train images (labelled *secondary* in the results). E2–E4 are excluded because their augmentation used those images.
+- **ViT vs CNNs: pretraining confound.** The main ViT-S checkpoint was pretrained on ImageNet-21k, the CNNs on
+  ImageNet-1k. A second ViT-S with the **same architecture and AugReg recipe but ImageNet-1k only**
+  (`vit_s16_in1k`) is run on E0–E2, so the report separates *architecture* (ViT-1k vs CNNs) from *pretraining
+  data* (ViT-21k vs ViT-1k). Architecture claims are made only from cross-model paired tests on the same images.
+- **Background-only test for every architecture** (3 seeds each). It shows how far each architecture *can*
+  exploit background statistics; how much a lab-trained model *relies* on them is read from E2−E0 and the
+  saliency maps.
 - **Chance levels** for the background-only test: uniform 1/27 = 0.037; **majority-class baseline 0.156** (the
   largest PlantVillage test class); the latter is the relevant baseline.
 

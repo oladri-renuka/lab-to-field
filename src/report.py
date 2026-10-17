@@ -22,9 +22,14 @@ import numpy as np
 import pandas as pd
 
 EXP_ORDER = ["e0", "e1", "e2", "e3", "e4", "e5_k5", "e5_k10", "e5_k25", "e6", "e7"]
-MODEL_ORDER = ["resnet50", "efficientnet_b0", "vit_s16"]
+MODEL_ORDER = ["resnet50", "efficientnet_b0", "vit_s16", "vit_s16_in1k"]
 REVIEW = Path("reports/audit/test_label_review.csv")
 PAIRS = [("e2", "e1"), ("e3", "e2"), ("e4", "e2"), ("e5_k10", "e3"), ("e5_k10", "e4"), ("e5_k10", "e2")]
+# Cross-architecture comparisons (same experiment, same test images). vit_s16_in1k separates architecture from
+# pretraining data: vit_s16 vs vit_s16_in1k = 21k-vs-1k pretraining; vit_s16_in1k vs CNNs = architecture at 1k.
+MODEL_PAIRS = [("vit_s16", "resnet50"), ("vit_s16", "efficientnet_b0"), ("resnet50", "efficientnet_b0"),
+               ("vit_s16_in1k", "resnet50"), ("vit_s16_in1k", "efficientnet_b0"), ("vit_s16", "vit_s16_in1k")]
+CROSS_MODEL_EXPS = ["e0", "e1", "e2"]
 
 
 def base_exp(e: str) -> str:
@@ -168,23 +173,42 @@ def holm(p: list[float]) -> list[float]:
     return adj.tolist()
 
 
+def _compare(cells_a, cells_b, n_a: int, n_b: int, **ids) -> dict | None:
+    (ca, pa), (cb, pb) = cells_a, cells_b
+    if not np.array_equal(pa, pb):
+        return None
+    diff, lo, hi, p = paired_bootstrap(ca, cb)
+    return {**ids, "ΔPlantDoc acc (A−B)": diff, "95% CI": f"[{lo:+.3f}, {hi:+.3f}]", "p (paired bootstrap)": p,
+            "p McNemar": mcnemar_exact(ca >= 0.5, cb >= 0.5), "seeds A/B": f"{n_a}/{n_b}"}
+
+
+def fmt_p(p: float) -> str:
+    return "<1e-4" if p < 1e-4 else f"{p:.4f}"
+
+
 def paired_tests(df: pd.DataFrame) -> str:
+    key = df.exp.map(base_exp)
+    cells, nseeds = {}, {}
+    for (model, exp), g in df.groupby([df.model, key]):
+        c = per_image_correct(g)
+        if c is not None:
+            cells[(model, exp)], nseeds[(model, exp)] = c, len(g)
     rows = []
-    for model in sorted(df.model.unique(), key=model_key):
-        sub = df[df.model == model]
-        cells = {e: per_image_correct(g) for e, g in sub.groupby(sub.exp.map(base_exp))}
-        cells = {e: v for e, v in cells.items() if v is not None}
-        pairs = [(e, "e0") for e in cells if e != "e0"] + [p for p in PAIRS if p[0] in cells and p[1] in cells]
+    for model in sorted({m for m, _ in cells}, key=model_key):
+        exps = [e for m, e in cells if m == model]
+        pairs = [(e, "e0") for e in exps if e != "e0" and "e0" in exps] + [p for p in PAIRS if p[0] in exps and p[1] in exps]
         for a, b in dict.fromkeys(pairs):
-            if "e0" not in cells and b == "e0":
-                continue
-            (ca, pa), (cb, pb) = cells[a], cells[b]
-            if not np.array_equal(pa, pb):
-                continue
-            diff, lo, hi, p = paired_bootstrap(ca, cb)
-            rows.append({"model": model, "A": a, "B": b, "ΔPlantDoc acc (A−B)": diff, "95% CI": f"[{lo:+.3f}, {hi:+.3f}]",
-                         "p (paired bootstrap)": p, "p McNemar": mcnemar_exact(ca >= 0.5, cb >= 0.5),
-                         "seeds A/B": f"{(sub.exp.map(base_exp) == a).sum()}/{(sub.exp.map(base_exp) == b).sum()}"})
+            r = _compare(cells[(model, a)], cells[(model, b)], nseeds[(model, a)], nseeds[(model, b)],
+                         kind="within model", model=model, A=a, B=b)
+            if r:
+                rows.append(r)
+    for exp in CROSS_MODEL_EXPS:
+        for ma, mb in MODEL_PAIRS:
+            if (ma, exp) in cells and (mb, exp) in cells:
+                r = _compare(cells[(ma, exp)], cells[(mb, exp)], nseeds[(ma, exp)], nseeds[(mb, exp)],
+                             kind="across models", model=exp, A=ma, B=mb)
+                if r:
+                    rows.append(r)
     if not rows:
         return ""
     t = pd.DataFrame(rows)
@@ -192,11 +216,40 @@ def paired_tests(df: pd.DataFrame) -> str:
     t["p McNemar Holm"] = holm(t["p McNemar"].tolist())
     t["significant (Holm < 0.05)"] = np.where(t["p Holm"] < 0.05, "yes", "no")
     t.to_csv("reports/paired_tests.csv", index=False)
+    shown = t.copy()
+    for c in ["p (paired bootstrap)", "p McNemar", "p Holm", "p McNemar Holm"]:
+        shown[c] = shown[c].map(fmt_p)
+    shown["ΔPlantDoc acc (A−B)"] = shown["ΔPlantDoc acc (A−B)"].map(lambda x: f"{x:+.4f}")
+    shown = shown.rename(columns={"model": "model / exp"})
     return ("## Paired comparisons on the same PlantDoc test images\n\n"
-            "Per-image correctness averaged over each experiment's seeds; paired bootstrap over images (10k resamples) "
-            "is the primary test, exact McNemar on majority-vote correctness is supplementary. Holm correction across "
-            f"all {len(t)} comparisons. With ~236 test images, differences under ~5 points are unlikely to be detectable.\n\n"
-            + t.round(4).to_markdown(index=False) + "\n")
+            "Per-image correctness averaged over each cell's seeds; paired bootstrap over images (10k resamples) is the "
+            "primary test, exact McNemar on majority-vote correctness is supplementary. **One Holm family** covers all "
+            f"{len(t)} comparisons (within-model experiment pairs and across-model pairs). `<1e-4` = no bootstrap "
+            "resample crossed zero. With 236 test images, differences under ~5 points are unlikely to be detectable.\n\n"
+            "Across-model rows: `vit_s16` (ImageNet-21k) vs `vit_s16_in1k` (same model and recipe, ImageNet-1k only) "
+            "measures the pretraining-data effect; `vit_s16_in1k` vs the CNNs (also ImageNet-1k) measures architecture "
+            "at matched pretraining data.\n\n" + shown.to_markdown(index=False) + "\n")
+
+
+def shortcut_table(runs: Path) -> str:
+    rows = []
+    for f in sorted(runs.glob("shortcut_hull/*/seed*/metrics.json")):
+        m = json.loads(f.read_text())
+        rows.append({"model": m["model"], "acc": m["test_acc"], "majority": m["chance_majority"],
+                     "uniform": m["chance_uniform"]})
+    if not rows:
+        return ""
+    d = pd.DataFrame(rows)
+    g = d.groupby("model")
+    lines = ["## Background-only shortcut test, per architecture (PlantVillage test, leaf-free patches)\n",
+             f"Majority-class baseline {d.majority.iloc[0]:.3f}; uniform chance {d.uniform.iloc[0]:.3f}.\n",
+             "| Model | Background-only acc | seeds |", "|---|---|---|"]
+    for model in sorted(g.groups, key=model_key):
+        a = g.get_group(model).acc
+        lines.append(f"| {model} | {a.mean():.3f} ± {0 if len(a) < 2 else a.std():.3f} | {len(a)} |")
+    lines.append("\nThis measures how well each architecture *can* exploit background statistics. How much a lab-trained "
+                 "model *relies* on them is read from the E2−E0 gain and the saliency figures.\n")
+    return "\n".join(lines) + "\n"
 
 
 # ------------------------------------------------------------------ figures + compute
@@ -280,7 +333,7 @@ def main() -> None:
         md += ("\n\n## Secondary field test: PlantDoc train split (E0/E1 only, which never see PlantDoc pixels)\n\n"
                + "\n".join(["| Exp | Model | PlantDoc-train acc | seeds |", "|---|---|---|---|"]
                            + [f"| {r.exp} | {r.model} | {fmt(r, 'pd_pool_acc')} | {r.n_seeds} |" for _, r in pool.iterrows()]))
-    md += "\n\n" + paired_tests(df) + "\n" + compute_tables(runs)
+    md += "\n\n" + paired_tests(df) + "\n" + shortcut_table(runs) + "\n" + compute_tables(runs)
     (out / "results.md").write_text(md)
     bar_figure(s, "pd_acc", "PlantDoc test accuracy", "Field accuracy per experiment (mean ± std over seeds)",
                out / "figures" / "pd_acc.png")

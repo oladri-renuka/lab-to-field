@@ -66,3 +66,22 @@ def test_lab_only_rows_select_on_lab_val(exp):
 
     cfg = load_config(Path(__file__).resolve().parents[1] / f"configs/experiments/{exp}.yaml")
     assert cfg.train.select_on == "pv_val"
+
+
+def test_cross_model_pairs_are_compared_on_same_images(tmp_path, monkeypatch):
+    from src import report
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "reports").mkdir()
+    rng = np.random.default_rng(0)
+    paths = np.array([f"img{i}.jpg" for i in range(50)])
+    labels = rng.integers(0, 3, 50)
+    rows = []
+    for model, acc in (("vit_s16", 0.9), ("resnet50", 0.3)):
+        run = tmp_path / model
+        run.mkdir()
+        probs = np.eye(3)[np.where(rng.random(50) < acc, labels, (labels + 1) % 3)]
+        np.savez(run / "preds_primary_pd_test.npz", probs=probs, labels=labels, paths=paths)
+        rows.append({"exp": "e0", "model": model, "run": str(run)})
+    out = report.paired_tests(pd.DataFrame(rows))
+    assert "across models" in out and "vit_s16" in out

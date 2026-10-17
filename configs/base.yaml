@@ -47,6 +47,9 @@ models:
   resnet50:        {timm_name: resnet50.a1_in1k,                           lr: 3.0e-4}
   efficientnet_b0: {timm_name: efficientnet_b0.ra_in1k,                    lr: 3.0e-4}
   vit_s16:         {timm_name: vit_small_patch16_224.augreg_in21k_ft_in1k, lr: 1.0e-4}
+  # Same architecture + AugReg recipe, ImageNet-1k pretraining only: controls the 21k-vs-1k confound when
+  # comparing ViT with the (1k-pretrained) CNNs.
+  vit_s16_in1k:    {timm_name: vit_small_patch16_224.augreg_in1k,          lr: 1.0e-4}
 
 train:
   epochs: 30
