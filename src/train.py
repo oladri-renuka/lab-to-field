@@ -101,6 +101,10 @@ def main() -> None:
     ap.add_argument("overrides", nargs="*")
     args = ap.parse_args()
     cfg = load_config(args.config, args.overrides)
+    done = run_dir(cfg) / "metrics.json"
+    if os.environ.get("SKIP_FINISHED") == "1" and done.exists() and not cfg.get("overwrite", False):
+        print(f"[train] already finished, skipping: {done.parent}", flush=True)
+        return
     if int(os.environ.get("RANK", 0)) == 0:
         with RunLock(run_dir(cfg)):
             run(cfg)
