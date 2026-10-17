@@ -1,14 +1,49 @@
-# Results (PlantDoc test, 27 shared classes)
+# Results (PlantDoc test: 236 images, 27 shared classes)
 
-| Exp | Model | PlantDoc acc | PlantDoc macro-F1 | ECE | PlantVillage acc | Gap (PV−PD) ↓ | seeds |
-|---|---|---|---|---|---|---|---|
-| e0 | efficientnet_b0 | 0.254 ± 0.000 | 0.235 ± 0.000 | 0.215 ± 0.000 | 0.996 ± 0.000 | 0.742 ± 0.000 | 1 |
-| e1 | efficientnet_b0 | 0.250 ± 0.000 | 0.208 ± 0.000 | 0.268 ± 0.000 | 0.998 ± 0.000 | 0.748 ± 0.000 | 1 |
-| e2 | efficientnet_b0 | 0.343 ± 0.000 | 0.315 ± 0.000 | 0.180 ± 0.000 | 0.993 ± 0.000 | 0.650 ± 0.000 | 1 |
-| e3 | efficientnet_b0 | 0.326 ± 0.000 | 0.281 ± 0.000 | 0.275 ± 0.000 | 0.993 ± 0.000 | 0.667 ± 0.000 | 1 |
-| e4 | efficientnet_b0 | 0.292 ± 0.000 | 0.257 ± 0.000 | 0.128 ± 0.000 | 0.993 ± 0.000 | 0.701 ± 0.000 | 1 |
-| e5_k5 | efficientnet_b0 | 0.428 ± 0.000 | 0.416 ± 0.000 | 0.121 ± 0.000 | 0.954 ± 0.000 | 0.526 ± 0.000 | 1 |
-| e5_k10 | efficientnet_b0 | 0.436 ± 0.000 | 0.430 ± 0.000 | 0.139 ± 0.000 | 0.940 ± 0.000 | 0.504 ± 0.000 | 1 |
-| e5_k25 | efficientnet_b0 | 0.547 ± 0.000 | 0.552 ± 0.000 | 0.100 ± 0.000 | 0.949 ± 0.000 | 0.403 ± 0.000 | 1 |
-| e7 | efficientnet_b0 | 0.538 ± 0.000 | 0.530 ± 0.000 | 0.116 ± 0.000 | 0.348 ± 0.000 | -0.190 ± 0.000 | 1 |
+Headline: **PlantDoc test accuracy** (mean ± std over seeds). The gap is secondary (fine-tuning on field images also lowers lab accuracy, which shrinks the gap without any field gain).
+
+| Exp | Model | **PlantDoc acc** | macro-F1 | ECE | PlantVillage acc | Gap (PV−PD) | PlantDoc acc, PD-val-selected† | selected on | seeds |
+|---|---|---|---|---|---|---|---|---|---|
+| e0 | resnet50 | **0.291 ± 0.005** | 0.259 ± 0.011 | 0.283 ± 0.024 | 0.993 ± 0.001 | 0.702 ± 0.005 | 0.295 ± 0.040 | pv_val | 3 |
+| e0 | efficientnet_b0 | **0.242 ± 0.004** | 0.226 ± 0.006 | 0.213 ± 0.032 | 0.995 ± 0.000 | 0.753 ± 0.004 | 0.260 ± 0.026 | pv_val | 3 |
+| e0 | vit_s16 | **0.369 ± 0.000** | 0.356 ± 0.000 | 0.241 ± 0.000 | 0.996 ± 0.000 | 0.628 ± 0.000 | 0.360 ± 0.000 | pv_val | 1 |
+| e1 | resnet50 | **0.301 ± 0.004** | 0.273 ± 0.008 | 0.255 ± 0.024 | 0.995 ± 0.001 | 0.694 ± 0.004 | 0.343 ± 0.026 | pv_val | 3 |
+| e1 | efficientnet_b0 | **0.244 ± 0.012** | 0.212 ± 0.012 | 0.224 ± 0.039 | 0.995 ± 0.001 | 0.751 ± 0.012 | 0.267 ± 0.004 | pv_val | 3 |
+| e1 | vit_s16 | **0.343 ± 0.000** | 0.320 ± 0.000 | 0.251 ± 0.000 | 0.996 ± 0.000 | 0.653 ± 0.000 | 0.386 ± 0.000 | pv_val | 1 |
+| e2 | resnet50 | **0.347 ± 0.017** | 0.326 ± 0.025 | 0.281 ± 0.012 | 0.992 ± 0.001 | 0.645 ± 0.018 | 0.357 ± 0.027 | pv_val | 3 |
+| e2 | efficientnet_b0 | **0.332 ± 0.011** | 0.303 ± 0.009 | 0.267 ± 0.015 | 0.995 ± 0.001 | 0.663 ± 0.010 | 0.369 ± 0.031 | pv_val | 3 |
+| e2 | vit_s16 | **0.352 ± 0.000** | 0.330 ± 0.000 | 0.328 ± 0.000 | 0.997 ± 0.000 | 0.646 ± 0.000 | 0.466 ± 0.000 | pv_val | 1 |
+| e7 | resnet50 | **0.638 ± 0.009** | 0.627 ± 0.004 | 0.075 ± 0.011 | 0.384 ± 0.026 | -0.255 ± 0.030 | — | pd_val | 3 |
+| e7 | efficientnet_b0 | **0.541 ± 0.009** | 0.526 ± 0.014 | 0.075 ± 0.037 | 0.305 ± 0.037 | -0.236 ± 0.040 | — | pd_val | 3 |
+
+† Optimistic: checkpoint chosen on PlantDoc (field) val. Only reported for rows whose headline checkpoint is chosen on PlantVillage (lab) val.
+
+## Secondary field test: PlantDoc train split (E0/E1 only, which never see PlantDoc pixels)
+
+| Exp | Model | PlantDoc-train acc | seeds |
+|---|---|---|---|
+| e0 | resnet50 | 0.238 ± 0.008 | 3 |
+| e0 | efficientnet_b0 | 0.174 ± 0.015 | 3 |
+| e0 | vit_s16 | 0.271 ± 0.000 | 1 |
+| e1 | resnet50 | 0.230 ± 0.003 | 3 |
+| e1 | efficientnet_b0 | 0.192 ± 0.010 | 3 |
+| e1 | vit_s16 | 0.276 ± 0.000 | 1 |
+
+## Paired comparisons on the same PlantDoc test images
+
+Per-image correctness averaged over each experiment's seeds; paired bootstrap over images (10k resamples) is the primary test, exact McNemar on majority-vote correctness is supplementary. Holm correction across all 11 comparisons. With ~236 test images, differences under ~5 points are unlikely to be detectable.
+
+| model           | A   | B   |   ΔPlantDoc acc (A−B) | 95% CI           |   p (paired bootstrap) |   p McNemar | seeds A/B   |   p Holm |   p McNemar Holm | significant (Holm < 0.05)   |
+|:----------------|:----|:----|----------------------:|:-----------------|-----------------------:|------------:|:------------|---------:|-----------------:|:----------------------------|
+| resnet50        | e1  | e0  |                0.0099 | [-0.028, +0.049] |                 0.6144 |      0.6271 | 3/3         |   1      |           1      | no                          |
+| resnet50        | e2  | e0  |                0.0565 | [+0.011, +0.103] |                 0.015  |      0.1742 | 3/3         |   0.105  |           1      | no                          |
+| resnet50        | e7  | e0  |                0.3475 | [+0.285, +0.410] |                 0      |      0      | 3/3         |   0      |           0      | yes                         |
+| resnet50        | e2  | e1  |                0.0466 | [-0.000, +0.093] |                 0.0538 |      0.4709 | 3/3         |   0.3228 |           1      | no                          |
+| efficientnet_b0 | e1  | e0  |                0.0028 | [-0.031, +0.038] |                 0.8766 |      0.6177 | 3/3         |   1      |           1      | no                          |
+| efficientnet_b0 | e2  | e0  |                0.0904 | [+0.045, +0.137] |                 0      |      0.0007 | 3/3         |   0      |           0.0065 | yes                         |
+| efficientnet_b0 | e7  | e0  |                0.2994 | [+0.237, +0.360] |                 0      |      0      | 3/3         |   0      |           0      | yes                         |
+| efficientnet_b0 | e2  | e1  |                0.0876 | [+0.038, +0.136] |                 0.0012 |      0.0078 | 3/3         |   0.0096 |           0.0623 | yes                         |
+| vit_s16         | e1  | e0  |               -0.0254 | [-0.076, +0.025] |                 0.3698 |      0.4177 | 1/1         |   1      |           1      | no                          |
+| vit_s16         | e2  | e0  |               -0.0169 | [-0.085, +0.051] |                 0.6638 |      0.708  | 1/1         |   1      |           1      | no                          |
+| vit_s16         | e2  | e1  |                0.0085 | [-0.059, +0.076] |                 0.8476 |      0.9036 | 1/1         |   1      |           1      | no                          |
 
