@@ -13,6 +13,23 @@ from serve.predictor import Predictor
 UNSURE = float(os.environ.get("UNSURE_THRESHOLD", 0.5))
 predictor = Predictor()
 
+try:  # Hugging Face ZeroGPU requires at least one @spaces.GPU function; elsewhere this is a no-op
+    import spaces
+
+    on_gpu = spaces.GPU(duration=20)
+except ImportError:
+    def on_gpu(fn):
+        return fn
+
+
+@on_gpu
+def cam_overlay(img: Image.Image) -> Image.Image | None:
+    cam = predictor.grad_cam(img)
+    if cam is None:
+        return None
+    base = np.asarray(img.convert("RGB"), dtype=float) / 255
+    return Image.fromarray((255 * (0.55 * base + 0.45 * colormaps["jet"](cam)[..., :3])).astype(np.uint8))
+
 
 def pretty(label: str) -> str:
     crop, _, disease = label.partition("___")
@@ -30,12 +47,7 @@ def run(img: Image.Image):
                    "Try a closer, well-lit photo of one leaf.")
     else:
         verdict = f"**{pretty(top['label'])}** ({top['confidence']:.0%})"
-    cam = predictor.grad_cam(img)
-    overlay = None
-    if cam is not None:
-        base = np.asarray(img.convert("RGB"), dtype=float) / 255
-        overlay = Image.fromarray((255 * (0.55 * base + 0.45 * colormaps["jet"](cam)[..., :3])).astype(np.uint8))
-    return verdict, scores, overlay
+    return verdict, scores, cam_overlay(img)
 
 
 demo = gr.Interface(
@@ -43,8 +55,11 @@ demo = gr.Interface(
     inputs=gr.Image(type="pil", label="Leaf photo"),
     outputs=[gr.Markdown(label="Prediction"), gr.Label(num_top_classes=3, label="Top-3"), gr.Image(label="Grad-CAM")],
     title="Crop disease detection (field-robust)",
-    description=("EfficientNet-B0, INT8 ONNX, trained on PlantVillage with lab-to-field augmentation. "
-                 "Covers only the crops/diseases shared by PlantVillage and PlantDoc. Not a substitute for an agronomist."),
+    description=(f"EfficientNet-B0 ({predictor.meta.get('app_model', 'model_int8.onnx').replace('model_', '').replace('.onnx', '').upper()} "
+                 f"ONNX, CPU), checkpoint `{predictor.meta.get('source_checkpoint', '?')}`, chosen by accuracy on PlantDoc field "
+                 f"validation photos. Covers {len(predictor.meta['classes'])} crop/disease classes shared by PlantVillage and "
+                 "PlantDoc; anything else is forced into one of them. Below 50% confidence it answers 'unsure'. "
+                 "Research demo, not a substitute for an agronomist."),
     flagging_mode="never",
 )
 

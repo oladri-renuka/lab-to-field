@@ -14,6 +14,7 @@ OUT=build/space
 rm -rf "$OUT" && mkdir -p "$OUT/serve/artifacts"
 cp serve/space/README.md serve/space/app.py "$OUT/"
 cp serve/requirements.txt "$OUT/requirements.txt"
+echo "spaces" >> "$OUT/requirements.txt"   # ZeroGPU runtime (free-tier Gradio Spaces run on ZeroGPU)
 cp serve/__init__.py serve/predictor.py serve/app.py "$OUT/serve/"
 cp "$A/meta.json" "$A/$APP_MODEL" "$A/model_fp32.pt" "$OUT/serve/artifacts/"
 echo "[space] built $OUT ($(du -sh "$OUT" | cut -f1))"

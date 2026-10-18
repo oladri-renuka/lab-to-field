@@ -15,6 +15,6 @@ license: cc-by-4.0
 Upload a photo of a single leaf: the model returns the top-3 diseases with confidence and a Grad-CAM heat map.
 Below 50% confidence it answers **"unsure"** instead of guessing.
 
-- Model: EfficientNet-B0, INT8 ONNX, chosen by validation accuracy on PlantDoc field photos.
+- Model: EfficientNet-B0 (ONNX on CPU; INT8 was tested and not adopted), chosen by validation accuracy on PlantDoc field photos.
 - Covers 27 crop/disease classes shared by PlantVillage and PlantDoc only; anything else is forced into one of them.
 - Research demo, not a diagnostic tool. Code and results: https://github.com/oladri-renuka/lab-to-field
