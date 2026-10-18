@@ -267,7 +267,7 @@ def recovered_share(s: pd.DataFrame) -> str:
         cells = []
         for m in models:
             e0, e7, v = piv.loc["e0", m], piv.loc["e7", m], piv.loc[e, m]
-            cells.append("—" if pd.isna(v) or e7 == e0 else f"{(v - e0) / (e7 - e0):+.0%}")
+            cells.append("—" if pd.isna(v) or pd.isna(e0) or pd.isna(e7) or e7 == e0 else f"{(v - e0) / (e7 - e0):+.0%}")
         lines.append(f"| {e} | " + " | ".join(cells) + " |")
     return "\n".join(lines) + "\n"
 
