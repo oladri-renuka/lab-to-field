@@ -59,8 +59,8 @@ E0 = lab only, E7 = PlantDoc train only (reference). Computed on mean PlantDoc a
 
 | Exp | resnet50 | efficientnet_b0 | vit_s16 | vit_s16_in1k |
 |---|---|---|---|---|
-| e1 | +3% | +1% | -14% | +nan% |
-| e2 | +16% | +30% | -5% | +nan% |
+| e1 | +3% | +1% | -14% | — |
+| e2 | +16% | +30% | -5% | — |
 | e3 | +10% | +16% | -16% | — |
 | e4 | +3% | +7% | +3% | — |
 | e5_k5 | +27% | +63% | +52% | — |
