@@ -1,0 +1,4 @@
+path,ok,format,mode,w,h,exif_orientation,error
+data/raw/PlantDoc-Dataset/test/Apple Scab Leaf/apples_apple-scab_02_thm.jpg,True,JPEG,RGB,115,85,1,
+data/raw/PlantDoc-Dataset/test/Tomato leaf mosaic virus/Tomato-Mosaic-1wdr2jx-300x225.jpg,True,JPEG,RGB,130,69,1,
+data/raw/PlantDoc-Dataset/train/Tomato mold leaf/tomato_Leaf-roll-physiological-7059-SLoewen_thm.jpg,True,JPEG,RGB,115,85,1,

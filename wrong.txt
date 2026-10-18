@@ -1,0 +1,6 @@
+Blueberry___healthy:1
+Blueberry___healthy:3
+Blueberry___healthy:5
+Soybean___healthy:0
+Soybean___healthy:4
+Apple___Cedar_apple_rust:0

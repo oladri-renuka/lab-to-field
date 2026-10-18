@@ -1,0 +1,16 @@
+train_path,test_path,hamming
+data/raw/PlantDoc-Dataset/train/Blueberry leaf/blueberry-leaves-normal-above-and-iron-deficient-below-bgahf8.jpg,data/raw/PlantDoc-Dataset/test/Blueberry leaf/blueberry-leaves-normal-above-and-iron-deficient-below-bgahf8.jpg,0
+data/raw/PlantDoc-Dataset/train/Corn Gray leaf spot/2015070295153021.jpg,data/raw/PlantDoc-Dataset/test/Corn leaf blight/2015070295153021.jpg,0
+data/raw/PlantDoc-Dataset/train/Corn Gray leaf spot/corn-gray-leaf-spot-f4.jpg,data/raw/PlantDoc-Dataset/test/Corn leaf blight/corn-gray-leaf-spot-f4.jpg,0
+data/raw/PlantDoc-Dataset/train/Corn leaf blight/IMG_42231.jpg,data/raw/PlantDoc-Dataset/test/Corn Gray leaf spot/IMG_42231.jpg,0
+data/raw/PlantDoc-Dataset/train/Potato leaf early blight/1421_0.jpeg?itok=FMtmgePj.jpg,data/raw/PlantDoc-Dataset/test/Potato leaf late blight/1421_0.jpeg?itok=FMtmgePj.jpg,0
+data/raw/PlantDoc-Dataset/train/Potato leaf early blight/5816740026_d42ef24413_Phytophthora-Infestans.jpg,data/raw/PlantDoc-Dataset/test/Potato leaf late blight/5816740026_d42ef24413_Phytophthora-Infestans.jpg,0
+data/raw/PlantDoc-Dataset/train/Potato leaf early blight/irish-blight-symptoms-on-potato-leaves-atmf8b.jpg,data/raw/PlantDoc-Dataset/test/Potato leaf late blight/irish-blight-symptoms-on-potato-leaves-atmf8b.jpg,0
+data/raw/PlantDoc-Dataset/train/Potato leaf late blight/backus-056-potato-blight.jpg,data/raw/PlantDoc-Dataset/test/Potato leaf early blight/backus-056-potato-blight.jpg,0
+data/raw/PlantDoc-Dataset/train/Tomato Early blight leaf/earlyblightpotato.jpg,data/raw/PlantDoc-Dataset/test/Potato leaf early blight/earlyblightpotato.jpg,0
+data/raw/PlantDoc-Dataset/train/Tomato Septoria leaf spot/early-blight-septoria-ls-fig-3.jpg,data/raw/PlantDoc-Dataset/test/Tomato Septoria leaf spot/early-blight-septoria-ls-fig-3.jpg,0
+data/raw/PlantDoc-Dataset/train/Tomato Septoria leaf spot/tomato_V8.jpg,data/raw/PlantDoc-Dataset/test/Tomato leaf bacterial spot/tomato_V8.jpg,0
+data/raw/PlantDoc-Dataset/train/Tomato leaf bacterial spot/bacterial-canker3x2400-2ia1kgd.jpg,data/raw/PlantDoc-Dataset/test/Tomato leaf bacterial spot/07.17.18-Common_Tomato_Diseases_Canker-258x300.jpg,0
+data/raw/PlantDoc-Dataset/train/Tomato leaf late blight/late_blight1.jpg,data/raw/PlantDoc-Dataset/test/Tomato leaf late blight/18c.jpg,0
+data/raw/PlantDoc-Dataset/train/Tomato leaf late blight/tomato-late-blight-foliar-lesions_Scot-Nelson_CC-BY-SA-2.0.jpg,data/raw/PlantDoc-Dataset/test/Potato leaf late blight/5816740026_d42ef24413_Phytophthora-Infestans.jpg,0
+data/raw/PlantDoc-Dataset/train/Tomato leaf yellow virus/tylcv-seminar-1-638.jpg,data/raw/PlantDoc-Dataset/test/Tomato leaf yellow virus/tylcv-seminar-1-638.jpg,0
