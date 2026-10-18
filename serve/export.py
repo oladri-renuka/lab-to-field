@@ -58,6 +58,23 @@ def accuracy(session, paths, labels, size, mean, std, desc: str = "accuracy") ->
     return float((np.asarray(preds) == np.asarray(labels)).mean())
 
 
+def pick_checkpoint(model: str, runs: Path = Path("runs")) -> str:
+    """Best run of `model` by PlantDoc-VAL accuracy of its selected checkpoint (test is never looked at)."""
+    best = None
+    for f in sorted(runs.glob(f"*/{model}/seed*/metrics.json")):
+        m = json.loads(f.read_text())
+        if str(m.get("exp_id", "")).startswith(("compute_", "ddp")) or not (f.parent / "best.pt").exists():
+            continue
+        val = m.get("val_acc", {})
+        acc = val.get("pd_val") if isinstance(val, dict) else m.get("pd_val_acc")
+        if acc is not None and (best is None or acc > best[0]):
+            best = (acc, f.parent / "best.pt", m["exp_id"])
+    if best is None:
+        raise SystemExit(f"no {model} run with a checkpoint under {runs}")
+    print(f"[deploy] auto-selected {best[1]} ({best[2]}, PlantDoc-val acc {best[0]:.3f})", flush=True)
+    return str(best[1])
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default="configs/deploy.yaml")
@@ -68,6 +85,8 @@ def main() -> None:
     out.mkdir(parents=True, exist_ok=True)
 
     step = Steps("deploy", 4)
+    if str(dcfg.checkpoint) == "auto":
+        dcfg.checkpoint = pick_checkpoint(str(dcfg.deploy_model))
     step(f"loading {dcfg.checkpoint}")
     model, cfg, ckpt = load_checkpoint(dcfg.checkpoint, "cpu")
     model.eval()

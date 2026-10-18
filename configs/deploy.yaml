@@ -1,4 +1,5 @@
-checkpoint: runs/e2/efficientnet_b0/seed0/best.pt   # set to the best EfficientNet-B0 run (by PlantDoc-val)
+checkpoint: auto          # auto = the EfficientNet-B0 run with the best PlantDoc-VAL accuracy (never test); or a path
+deploy_model: efficientnet_b0
 export_dir: serve/artifacts
 opset: 17
 calibration_images: 500     # from PlantDoc *train split*
