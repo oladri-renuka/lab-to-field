@@ -4,7 +4,7 @@
 > (PlantDoc, 27 shared classes, 3 seeds). **Generative augmentation recovers little of that gap**: CycleGAN 10–16% of
 > the achievable gain for CNNs, a conditional VAE ≤ 7%, neither significant after Holm correction. **Ten real field
 > photos per class recover 45–78%**, significant for every model. ViT's apparent robustness comes from ImageNet-21k
-> pretraining, not from attention.
+> pretraining, not from attention. **Demo:** https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo
 
 ![PlantDoc accuracy per experiment](reports/figures/pd_acc.png)
 
@@ -190,8 +190,10 @@ squeeze-excite) or quantization-aware training is the next step for a phone buil
 The ONNX FP32 model scores 61.1% on val vs 62.4% for the PyTorch checkpoint: the serving code resizes with PIL bilinear
 instead of torchvision's resize.
 
-Demo: Gradio app (`serve/app.py`, packaged for Hugging Face Spaces by `scripts/make_space.sh`): top-3 diseases with
-confidence, a Grad-CAM overlay, and **"unsure"** below 0.5 confidence. A FastAPI service with a Dockerfile is in `serve/`.
+**Live demo: https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo** (Gradio on a free ZeroGPU Space,
+inference on CPU; packaged by `scripts/make_space.sh`): top-3 diseases with confidence, a Grad-CAM overlay, and
+**"unsure"** below 0.5 confidence. A non-leaf test image is answered "unsure" (top confidence 16%). A FastAPI service
+with a Dockerfile is in `serve/`.
 
 ## Reproducibility
 
