@@ -24,7 +24,8 @@ import pandas as pd
 EXP_ORDER = ["e0", "e1", "e2", "e3", "e4", "e5_k5", "e5_k10", "e5_k25", "e6", "e7"]
 MODEL_ORDER = ["resnet50", "efficientnet_b0", "vit_s16", "vit_s16_in1k"]
 REVIEW = Path("reports/audit/test_label_review.csv")
-PAIRS = [("e2", "e1"), ("e3", "e2"), ("e4", "e2"), ("e5_k10", "e3"), ("e5_k10", "e4"), ("e5_k10", "e2")]
+PAIRS = [("e2", "e1"), ("e3", "e2"), ("e4", "e2"), ("e5_k10", "e3"), ("e5_k10", "e4"), ("e5_k10", "e2"),
+         ("e6", "e5_k10"), ("e6", "e2")]  # E6 = best of E1-E4 + 10/class: does the combination beat few-shot alone?
 # Cross-architecture comparisons (same experiment, same test images). vit_s16_in1k separates architecture from
 # pretraining data: vit_s16 vs vit_s16_in1k = 21k-vs-1k pretraining; vit_s16_in1k vs CNNs = architecture at 1k.
 MODEL_PAIRS = [("vit_s16", "resnet50"), ("vit_s16", "efficientnet_b0"), ("resnet50", "efficientnet_b0"),
@@ -252,6 +253,25 @@ def shortcut_table(runs: Path) -> str:
     return "\n".join(lines) + "\n"
 
 
+def recovered_share(s: pd.DataFrame) -> str:
+    """(E - E0) / (E7 - E0) on PlantDoc accuracy: share of the achievable field gain each method recovers."""
+    piv = s.assign(base=s.exp.map(base_exp)).pivot_table(index="base", columns="model", values="pd_acc_mean")
+    if "e0" not in piv.index or "e7" not in piv.index:
+        return ""
+    models = [m for m in MODEL_ORDER if m in piv.columns]
+    rows = [e for e in EXP_ORDER if e in piv.index and e not in ("e0", "e7")]
+    lines = ["## Share of the achievable field gain recovered: (E − E0) / (E7 − E0)\n",
+             "E0 = lab only, E7 = PlantDoc train only (reference). Computed on mean PlantDoc accuracy; significance is in "
+             "the paired-comparison table.\n", "| Exp | " + " | ".join(models) + " |", "|---|" + "---|" * len(models)]
+    for e in rows:
+        cells = []
+        for m in models:
+            e0, e7, v = piv.loc["e0", m], piv.loc["e7", m], piv.loc[e, m]
+            cells.append("—" if pd.isna(v) or e7 == e0 else f"{(v - e0) / (e7 - e0):+.0%}")
+        lines.append(f"| {e} | " + " | ".join(cells) + " |")
+    return "\n".join(lines) + "\n"
+
+
 # ------------------------------------------------------------------ figures + compute
 def bar_figure(s: pd.DataFrame, col: str, ylabel: str, title: str, path: Path) -> None:
     exps = list(dict.fromkeys(s.exp))
@@ -333,7 +353,7 @@ def main() -> None:
         md += ("\n\n## Secondary field test: PlantDoc train split (E0/E1 only, which never see PlantDoc pixels)\n\n"
                + "\n".join(["| Exp | Model | PlantDoc-train acc | seeds |", "|---|---|---|---|"]
                            + [f"| {r.exp} | {r.model} | {fmt(r, 'pd_pool_acc')} | {r.n_seeds} |" for _, r in pool.iterrows()]))
-    md += "\n\n" + paired_tests(df) + "\n" + shortcut_table(runs) + "\n" + compute_tables(runs)
+    md += "\n\n" + recovered_share(s) + "\n" + paired_tests(df) + "\n" + shortcut_table(runs) + "\n" + compute_tables(runs)
     (out / "results.md").write_text(md)
     bar_figure(s, "pd_acc", "PlantDoc test accuracy", "Field accuracy per experiment (mean ± std over seeds)",
                out / "figures" / "pd_acc.png")
