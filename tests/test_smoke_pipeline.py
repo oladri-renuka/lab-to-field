@@ -73,3 +73,7 @@ def test_pipeline(tmp_path):
     out = run(["src.report", "--runs", str(tmp_path / "runs")], tmp_path)
     assert "e5_k3" in out and (tmp_path / "reports/figures/pd_acc.png").exists()
     assert "Paired comparisons" in out
+    run(["src.failure", "--runs", str(tmp_path / "runs"), "--processed-dir", str(proc)], tmp_path)
+    assert (tmp_path / "reports/failure_analysis.md").exists()
+    run(["src.curves", "--runs", str(tmp_path / "runs")], tmp_path)
+    assert (tmp_path / "reports/figures/val_curves.png").exists()
