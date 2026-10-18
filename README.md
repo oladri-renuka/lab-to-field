@@ -158,19 +158,40 @@ are different things: ViT-S (IN-21k) exploits backgrounds best here yet gains no
 On RunPod multi-A40 pods NCCL peer-to-peer hangs at the first collective (100% GPU utilisation, no progress);
 `scripts/compute_experiments.sh` sets `NCCL_P2P_DISABLE=1` for DDP.
 
-## Deployment (`serve/`)
+## Deployment (`serve/`, `reports/deploy.md`)
 
-_Pending._ The best EfficientNet-B0 (chosen on PlantDoc val) is exported to ONNX and quantized to INT8 with ONNX Runtime
-static quantization (QDQ, per-channel, calibrated on 500 PlantDoc-train images); `python -m serve.export` writes
-`reports/deploy.md` with FP32 vs INT8 accuracy, size and CPU latency (p50/p95, batch 1, 4 threads).
+The shipped model is the EfficientNet-B0 run with the best **PlantDoc-val** accuracy (E7 seed 2, trained on field
+images), exported to ONNX. INT8 static post-training quantization (ONNX Runtime, QDQ, per-channel weights,
+calibration on PlantDoc-train images) was tried in 7 variants, **chosen on PlantDoc-val only**:
 
-| Model | PlantDoc acc | Size (MB) | CPU p50 (ms) | CPU p95 (ms) |
+| Model | PlantDoc-val | PlantDoc-test | Size (MB) | CPU p50 / p95 (ms) |
 |---|---|---|---|---|
-| EfficientNet-B0 FP32 | — | — | — | — |
-| EfficientNet-B0 INT8 | — | — | — | — |
+| **EfficientNet-B0 FP32 (served)** | **61.1%** | **54.2%** | 15.4 | **5.0 / 5.4** |
+| EfficientNet-B0 INT8, best variant | 53.3% | 51.7% | 4.9 | 7.2 / 8.0 |
 
-Demo: Gradio app (`serve/app.py`) for Hugging Face Spaces: top-3 diseases with confidence, a Grad-CAM overlay, and
-**"unsure"** below 0.5 confidence. A FastAPI service with a Dockerfile is in `serve/`.
+*Batch 1, 4 CPU threads (x86-64 server CPU), ONNX Runtime 1.31.*
+
+| INT8 variant (calibration, quantized ops) | PlantDoc-val |
+|---|---|
+| MinMax, all ops (naive) | 15.9% |
+| Entropy, all / conv only | 23.4% / 21.3% |
+| Percentile 99.999, all ops | 42.4% |
+| Percentile, Conv/Gemm/MatMul only (SiLU + squeeze-excite in FP32) | 44.7% |
+| **Percentile, conv only, 16 depthwise convs kept in FP32** | **53.3%** |
+
+**INT8 is a negative result for EfficientNet-B0 here.** Naive static quantization destroys accuracy (62 → 16% on
+val); outlier-robust calibration and keeping SiLU, squeeze-excite and depthwise convolutions in float recover most of
+it, but the best variant still loses 7.7 points on val (2.5 on test), and the mixed INT8/FP32 graph is *slower* than
+FP32 on this CPU because of the conversions at every float/int boundary. Its one win is a 3.1× smaller file. The
+export therefore serves FP32 automatically (rule: INT8 only if it loses ≤ 3 points of PlantDoc-val accuracy); FP32
+already runs at 5 ms per image on 4 CPU threads. A quantization-friendly architecture (EfficientNet-Lite: ReLU6, no
+squeeze-excite) or quantization-aware training is the next step for a phone build.
+
+The ONNX FP32 model scores 61.1% on val vs 62.4% for the PyTorch checkpoint: the serving code resizes with PIL bilinear
+instead of torchvision's resize.
+
+Demo: Gradio app (`serve/app.py`, packaged for Hugging Face Spaces by `scripts/make_space.sh`): top-3 diseases with
+confidence, a Grad-CAM overlay, and **"unsure"** below 0.5 confidence. A FastAPI service with a Dockerfile is in `serve/`.
 
 ## Reproducibility
 
@@ -218,7 +239,8 @@ Demo: Gradio app (`serve/app.py`) for Hugging Face Spaces: top-3 diseases with c
 - **"Lab-only" is not zero field data for E2–E4**: they use unlabeled (E2, E3) or labeled (E4) PlantDoc-train images.
 - **Compute and DDP results are single-seed**; the DDP accuracy trend with batch size is within noise.
 - **Saliency is qualitative** (20 images; no leaf masks exist for PlantDoc to quantify background attention).
-- Latency will be measured on a server CPU with a constrained thread count, not on a phone (TFLite is optional and not done).
+- Latency is measured on a server CPU with 4 threads, not on a phone (TFLite is optional and not done); INT8 was not
+  adopted (see Deployment).
 
 ## Compute used
 
