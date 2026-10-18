@@ -5,6 +5,7 @@ fastapi==0.115.6
 uvicorn[standard]==0.32.1
 python-multipart==0.0.20
 gradio==5.9.1
+pydantic==2.10.6     # gradio 5.9 crashes building its API schema with pydantic>=2.11
 matplotlib>=3.8
 # Grad-CAM in the Gradio app (CPU wheels are enough)
 torch>=2.3
