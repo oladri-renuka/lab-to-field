@@ -107,7 +107,8 @@ def main() -> None:
             heat, pred = saliency(model, x)
             axes[r, c].imshow(overlay(img, heat))
             ok = "✓" if pred == label else "✗"
-            axes[r, c].set_title(f"{mcfg.exp_id} {ok}\n{classes[pred].split('___')[-1]}", fontsize=6,
+            crop, _, dis = classes[pred].partition("___")
+            axes[r, c].set_title(f"{mcfg.exp_id} {ok}\n{crop.split('_(')[0].split(',')[0]}: {dis}", fontsize=6,
                                  color="green" if pred == label else "red")
     for ax in axes.flat:
         ax.axis("off")

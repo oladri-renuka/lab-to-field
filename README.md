@@ -1,206 +1,242 @@
 # Crop disease detection that works in real fields
 
-> **Result:** _pending the final sweep._ Template: "Generative augmentation (**E?**) closes **X%** of the
-> lab-to-field gap for EfficientNet-B0 (gap **A → B** points, PlantDoc test, N shared classes, 3 seeds); ten real
-> field photos per class (E5, k=10) close **Y%**." Fill it in from `reports/results.md`; don't estimate.
+> **Result:** classifiers trained on lab photos (PlantVillage, 99% accuracy) reach only **24–38% on field photos**
+> (PlantDoc, 27 shared classes, 3 seeds). **Generative augmentation recovers little of that gap**: CycleGAN 10–16% of
+> the achievable gain for CNNs, a conditional VAE ≤ 7%, neither significant after Holm correction. **Ten real field
+> photos per class recover 45–78%**, significant for every model. ViT's apparent robustness comes from ImageNet-21k
+> pretraining, not from attention.
 
 ![PlantDoc accuracy per experiment](reports/figures/pd_acc.png)
 
-*Headline metric: **PlantDoc (field) test accuracy**, mean ± std over 3 seeds; `reports/figures/pd_acc.png`. The lab−field gap is reported
-secondary: fine-tuning on field images also lowers lab accuracy, which shrinks the gap without any field improvement. Created by `python -m src.report`.*
+*Headline metric: **PlantDoc (field) test accuracy**, mean ± std over seeds 0–2. E0 lab only → E7 field only; E1–E4 are
+lab-side fixes, E5 adds k real field photos per class. Created by `python -m src.report`.*
 
 ## How to run (3 commands)
 
 ```bash
-make setup data                                   # install, download PlantDoc, build manifests (HF PlantVillage)
-python -m src.train --config configs/experiments/e0_baseline.yaml model=efficientnet_b0 seed=0
-python -m src.report                              # -> reports/results.md, reports/figures/gap.png
+make setup data                                                                       # install; download + prepare both datasets (~15 min)
+python -m src.train --config configs/experiments/e0_baseline.yaml model=efficientnet_b0 seed=0   # one experiment (~25 min on an A40)
+python -m src.report                                                                  # results tables, paired tests, figures -> reports/
 ```
 
-Full sweep (E0–E7 × 3 models × 3 seeds): `make sweep`. Compute experiments: `make compute`. Deployment: `make deploy app`.
+Everything else is one script each, all resumable (finished runs are skipped): `bash scripts/run_experiments.sh`
+(full E0–E7 sweep), `bash scripts/followups.sh` (ViT-1k control, shortcut test per architecture),
+`bash scripts/analysis.sh` (curves, failure analysis, saliency, compute experiments),
+`ONLY=ddp bash scripts/compute_experiments.sh` (on a multi-GPU pod), `bash scripts/pod_setup.sh` (fresh RunPod pod).
 
 ## Question
 
 How much of the lab-to-field gap can generative augmentation (CycleGAN style transfer, conditional-VAE samples)
 close, compared with plain augmentation and with fine-tuning on a few real field images?
 
+## Results
+
+**PlantDoc test accuracy** (236 images, 27 classes), mean ± std over 3 seeds. Lab-only rows (E0–E4) select checkpoints on
+lab validation data only. Full table with macro-F1, ECE, lab accuracy, gap and reviewed-label accuracy: `reports/results.md`.
+
+| ID | Training data | ResNet-50 | EfficientNet-B0 | ViT-S (IN-21k) | ViT-S (IN-1k) |
+|---|---|---|---|---|---|
+| E0 | PlantVillage, baseline aug | 29.1 ± 0.5 | 24.2 ± 0.4 | **38.3 ± 2.1** | 26.4 ± 1.3 |
+| E1 | + RandAugment, MixUp/CutMix | 30.1 ± 0.4 | 24.4 ± 1.2 | 33.6 ± 1.6 | 29.1 ± 1.7 |
+| E2 | + background compositing | 34.7 ± 1.7 | 33.2 ± 1.1 | 36.6 ± 3.6 | 33.3 ± 3.8 |
+| E3 | + CycleGAN lab→field copies | 32.6 ± 1.9 | 29.0 ± 2.9 | 32.9 ± 0.9 | — |
+| E4 | + CVAE field-style samples | 30.2 ± 3.4 | 26.1 ± 0.9 | 39.4 ± 2.2 | — |
+| E5 | E0 → fine-tune on 5 / 10 / 25 field photos per class | 38.6 / 44.6 / 51.7 | 43.1 / 47.6 / 55.8 | 55.9 / 59.2 / 65.0 | — |
+| E6 | E2 (best of E1–E4 on field val) → fine-tune, 10 per class | 47.7 ± 1.4 | 51.8 ± 3.8 | 55.9 ± 2.8 | — |
+| E7 | PlantDoc train only (~1.9k field images) | 63.8 ± 0.9 | 54.1 ± 0.9 | 72.5 ± 1.9 | — |
+
+Lab accuracy (PlantVillage test) is 99.2–99.7% for every lab-trained row.
+
+**Share of the achievable field gain recovered**, (E − E0) / (E7 − E0):
+
+| | E1 | E2 | E3 | E4 | E5 k=5 | E5 k=10 | E5 k=25 | E6 |
+|---|---|---|---|---|---|---|---|---|
+| ResNet-50 | 3% | 16% | 10% | 3% | 27% | 45% | 65% | 54% |
+| EfficientNet-B0 | 1% | **30%** | 16% | 7% | 63% | 78% | 106% | 92% |
+| ViT-S (IN-21k) | −14% | −5% | −16% | 3% | 52% | 61% | 78% | 52% |
+
+**What is statistically supported** (paired bootstrap over the same 236 test images, Holm-corrected across all 72
+comparisons; `reports/paired_tests.csv`):
+
+1. **Generative augmentation does not significantly help any model.** CycleGAN (E3) and CVAE (E4) vs E0: all
+   Holm p ≥ 0.4. CycleGAN is the better generator (FID 96 vs 124 for raw lab images vs 271 for the CVAE) and shows the
+   larger, still non-significant, gains for the CNNs.
+2. **Ten real field photos per class beat every synthetic method, for every model** (E5 k=10 vs E2, E3, E4: all
+   Holm p < 1e-4); even five per class beat every synthetic method on mean accuracy, and are significant vs E0 for every
+   model. With 25 per class, EfficientNet matches training on all ~1.9k field images.
+3. **Background compositing helps the model that leans on the background most**: EfficientNet-B0 +9.0 points
+   (95% CI +4.5 to +13.7, Holm p < 1e-4), also over strong augmentation (+8.8, p = 0.048). ResNet-50 +5.6 and
+   ViT-S (IN-1k) +6.9 are suggestive but not significant after correction; ViT-S (IN-21k) gains nothing.
+4. **Standard augmentation (E1) is a null for every model.**
+5. **ViT is more robust only because of its pretraining.** ViT-S (IN-21k) beats ResNet-50 by +9.2 lab-only (Holm
+   p < 1e-4), but the same ViT-S pretrained on ImageNet-1k is level with the CNNs (−2.7 vs ResNet, +2.3 vs
+   EfficientNet, both p = 1.0), and 21k vs 1k is +11.9 (p < 1e-4). The ~1.9k-image secondary field pool agrees
+   (21k 30.3%, 1k 20.1%, ResNet 23.8%, EfficientNet 17.4%).
+6. **Combining compositing with few-shot (E6) adds nothing significant** over few-shot alone (+3.1, +4.2, −3.3 points).
+
+Secondary observations: fine-tuned CNNs lose ~5 points of lab accuracy while ViT-S keeps 99%, which is why the
+lab−field gap is not the headline; CVAE samples make EfficientNet and ViT better calibrated (ECE 0.15 and 0.13 vs
+0.21–0.39 for the other lab-trained rows) without making them more accurate; field-trained models are well calibrated
+(ECE 0.08–0.12 for E5/E7).
+
 ## Data
 
 | Dataset | Source | Role |
 |---|---|---|
-| PlantVillage (color) | HF `mohanty/PlantVillage` | Lab-domain training. HF splits keep photos of the same leaf together. |
-| PlantVillage (segmented) | same repo, `segmented` | Leaf cutouts for background compositing (E2) |
-| PlantDoc | GitHub `pratikkayal/PlantDoc-Dataset` (CC BY 4.0) | Field test set, field val set, few-shot pool |
+| PlantVillage (color) | HF `mohanty/PlantVillage` (`data.zip` + official leaf-grouped split lists) | Lab training; 10% leaf-grouped lab val; lab test |
+| PlantVillage (segmented) | same repo | Leaf masks for background compositing (E2) and the shortcut test |
+| PlantDoc | GitHub `pratikkayal/PlantDoc-Dataset` (CC BY 4.0) | Field test (held out), field val (20% of train, stratified), few-shot pool |
 
-Rules enforced in `src/data/prepare.py`:
-- **Shared classes only.** `configs/class_map.csv` maps PlantDoc folders to PlantVillage classes (two PlantDoc soybean folders map to one class). The label space is the mapped classes that appear in both PlantVillage train and PlantDoc test. **Shared classes: 27** (Potato healthy and Tomato spider mites map across but have no PlantDoc-test images). PlantDoc test has **236 images**, and 17 of the 27 classes have fewer than 10, so per-class numbers are noisy and every accuracy carries a bootstrap CI (see `reports/data_summary.md`).
-- **PlantDoc test is held out.** Early stopping, checkpoint selection, and the choice of E6's base experiment all use **PlantDoc-val**: a stratified 20% of PlantDoc train with a fixed split seed.
-- **Near-duplicates removed.** Any PlantDoc-train image within pHash Hamming distance ≤ 4 of a test image is dropped. The pairs are listed in `reports/dedup_plantdoc.csv`.
-- No TFDS. Its single ungrouped split leaks the same leaf across train and test.
+- **27 shared classes** (`configs/class_map.csv`; Potato healthy and Tomato spider mites map across but have no
+  PlantDoc-test images). PlantDoc test has **236 images, 4–12 per class**; per-class numbers are noisy and every
+  accuracy carries a bootstrap CI.
+- PlantDoc test is never used for any decision. Lab-only experiments choose checkpoints on PlantVillage val; experiments
+  that train on field labels (E5–E7) use PlantDoc val. No generator, background pool or calibration set touches
+  PlantDoc val or test.
 
-## Data audit (before any training)
-
-`make audit` writes `reports/audit/audit.md`. `make shortcut` runs the background-only test (3 seeds).
+### Data audit (before any training): `reports/audit/audit.md`
 
 | Check | Result |
 |---|---|
-| PlantVillage leaf grouping: leaf ids in both train and test | **0** (25% of images have no leaf id; pHash found 260 test images near-identical to a train image, **246** in shared classes, removed from test) |
-| PlantVillage images re-posted inside PlantDoc (removed, any split) | **1** (train) |
-| PlantDoc train ↔ test near-duplicates (removed from train) | **15** |
-| Segmented-train leaves whose color version is in test (excluded from compositing) | **8,469**: the color and segmented configs were split independently |
-| Leaves where the segmentation cut away lesions (> 10% of leaf restored by mask repair) | **1.1%** (33 / 3,000 sampled) |
-| Estimated PlantDoc label error (manual review, 20 per class) | — |
-| **Background-only classifier, PlantVillage test acc** (uniform chance 0.037, majority class 0.156) | **0.859 ± 0.002** (3 seeds, EfficientNet-B0; convex-hull leaf mask) |
+| PlantVillage leaf grouping: leaf ids in both train and test | **0**; pHash still found 260 test images near-identical to a train image (246 in shared classes), removed from test |
+| PlantVillage photos re-posted inside PlantDoc | **1** (train), removed |
+| PlantDoc train ↔ test near-duplicates (pHash ≤ 4) | **15**, removed from train |
+| Segmented-train leaves whose color version is in test | **8,469**: the color and segmented configs were split independently; compositing uses color-train leaves only |
+| Leaves where the segmentation cut away lesions | **1.1%**; masks repaired (closing + hole fill) and pasted from the color image |
+| **PlantDoc test labels judged wrong** (all 236 reviewed by hand) | **6 (2.5%)**: "healthy" leaves with lesions, a collage, a rust leaf without rust. Accuracy on reviewed labels differs from the headline by ≤ 1 point |
+| File sanity | 5 CMYK, 6 RGBA, 1 grayscale, 29 EXIF-rotated PlantDoc images; one loader handles all |
+| Lab vs field image statistics | Field photos are more saturated (0.41 vs 0.25) and ~6× less sharp (Laplacian variance 10.7 vs 63) |
+
+### The shortcut: PlantVillage backgrounds predict the label
+
+A classifier that sees **only leaf-free background patches** (shuffled 32 px patches outside the leaf's convex hull)
+predicts the PlantVillage class far above the majority-class baseline of 15.6% (uniform chance 3.7%):
+
+| ResNet-50 | EfficientNet-B0 | ViT-S (IN-21k) | ViT-S (IN-1k) |
+|---|---|---|---|
+| 81.8 ± 0.4% | 85.9 ± 0.2% | 88.9 ± 0.2% | 89.1 ± 0.2% |
 
 ![Background-only inputs](reports/figures/shortcut_hull_examples.png)
 
-*Background-only input: a shuffled grid of patches from leaf-free regions (mask from the segmented config, dilated).
-No leaf pixels and no silhouette remain, so above-chance accuracy can only come from the background. The leaf region is the convex hull of the segmentation mask plus a 9 px margin, because the PlantVillage segmentation sometimes cuts dark lesions out of the leaf. With the raw mask the result was 0.870 ± 0.005, so lesion leakage accounts for about 1 point.*
+Every architecture *can* read the label from the background. How much a lab-trained model *relies* on it shows up as
+the E2 − E0 gain, which is largest for EfficientNet and absent for the 21k-pretrained ViT. Exploitability and reliance
+are different things: ViT-S (IN-21k) exploits backgrounds best here yet gains nothing from removing them.
 
-## Baseline first
+## Failure analysis (`reports/failure_analysis.md`)
 
-**E0** fine-tunes ImageNet-pretrained models on PlantVillage with standard augmentation. This is the lab number everyone quotes, and it measures the raw gap.
-The practical bar every generative method has to beat is **E5 at k=10**: label ten field photos per class and fine-tune.
-**E7** (PlantDoc only, no lab data) is the reference for what field data alone achieves.
+![EfficientNet E0 errors](reports/figures/failures_e0_efficientnet_b0.png)
 
-## Experiments and results
+- **Fine-grained confusions dominate, not background-looking.** The most common lab-only errors, consistent across all
+  four models: Corn northern leaf blight → gray leaf spot (~7 of 12 test images per seed), Tomato Septoria → early
+  blight, **Potato late blight → Tomato late blight**, Corn common rust → gray leaf spot / northern leaf blight.
+- **Prediction collapse.** Lab-only models put **35–50% of field predictions into three classes**, mostly
+  "Tomato late blight" (16–32%), against 11% if spread evenly. Messy field photos read as "diseased" to them.
+- **Saliency does not show background attention on field images.** Grad-CAM / attention rollout on 20 fixed test
+  images (`reports/figures/saliency_<model>.png`) shows E0 already attending to leaves and lesions; the errors are
+  disease/crop confusions. The background shortcut is a property of the lab images, which field photos do not contain.
+  E2 sometimes focuses more tightly on lesions, but 20 images is anecdotal.
+- **Some classes stay hard even with 25 field photos per class**: Tomato bacterial spot (11–26% recall), Tomato leaf
+  mold, and the healthy classes of blueberry, tomato and cherry. Few test images (6–11) make these estimates noisy.
+- **Few-shot helps unevenly**: Strawberry healthy +76 recall points, Tomato yellow leaf curl virus +57; Tomato late
+  blight *loses* 22 because the collapse onto it unwinds.
+- **Lab training past a few epochs does not help the field.** Lab val saturates by epoch ~3 while field val peaks in
+  the first ~5 epochs and stays flat (`reports/figures/val_curves.png`). Choosing checkpoints on field val would have
+  flattered lab-only models by 3–9 points (`reports/val_curves.md`), which is why lab-only rows select on lab val.
+- **Calibration.** Lab-only models are overconfident in the field (ECE 0.21–0.39; `reports/figures/reliability_*.png`),
+  which is what the demo's "unsure below 0.5" rule is for.
 
-Every row is evaluated once on **PlantDoc test** (shared classes), using the checkpoint chosen on PlantDoc-val. Values are mean ± std over seeds 0, 1, 2.
-The full table, with macro-F1, ECE and every model, is in `reports/results.md`.
+## Compute-cost experiments (one A40; `reports/results.md`, "Compute experiments")
 
-| ID | Training data | ResNet-50 PD acc | EffNet-B0 PD acc | ViT-S/16 PD acc | Gap (EffNet-B0) |
-|---|---|---|---|---|---|
-| E0 | PlantVillage, baseline aug | — | — | — | — |
-| E1 | + RandAugment, MixUp/CutMix | — | — | — | — |
-| E2 | + background compositing | — | — | — | — |
-| E3 | + CycleGAN lab→field copies | — | — | — | — |
-| E4 | + CVAE field-domain samples | — | — | — | — |
-| E5 | E0 → fine-tune, k = 5 / 10 / 25 | — | — | — | — |
-| E6 | best of E1–E4 (by val) → fine-tune k=10 | — | — | — | — |
-| E7 | PlantDoc train only | — | — | — | — |
-
-PlantDoc test has only a few hundred images in the shared classes. `metrics.json` therefore also stores a 95% bootstrap CI for every run's accuracy. Treat differences smaller than that as noise.
-
-### Generated images
-
-| | FID vs PlantDoc train ↓ |
+| Experiment | Result |
 |---|---|
-| PlantVillage (no translation, reference) | — |
-| CycleGAN lab→field | — |
-| CVAE (field-domain samples) | — |
+| **bf16 AMP vs FP32**, ResNet-50 | **1.66× faster** (684 vs 412 img/s), **−46% memory** (6.2 vs 11.4 GB), accuracy within noise |
+| **bf16 AMP vs FP32**, ViT-S | **2.51× faster** (1,046 vs 416 img/s), **−40% memory** (4.9 vs 8.1 GB); data loading starts to limit bf16 ViT (data wait 24%) |
+| **Gradient checkpointing**, ViT-S | memory **4.9 → 1.3 GB (−73%)** for **+13% epoch time**; identical accuracy |
+| **DDP**, ResNet-50, 1 / 2 / 4 A40 (linear lr scaling) | 687 / 1,277 / 2,423 img/s: **93% / 88% scaling efficiency**; data wait rises 3% → 5% → 10%. Field accuracy 28.8 / 25.8 / 23.7% (single seed, within the test CI; a large-batch effect cannot be ruled out) |
+| **Profiler**, one ResNet-50 epoch | data loading is **not** the bottleneck (3.5% wait); the run is GPU-bound ("command buffer full" 33%); top kernels: convolution backward 26%, batch-norm backward ~20% |
 
-`reports/figures/cyclegan_grid.png` and `reports/figures/cvae_grid.png` hold 4×4 grids of samples. Numbers are in `reports/fid.json`.
+On RunPod multi-A40 pods NCCL peer-to-peer hangs at the first collective (100% GPU utilisation, no progress);
+`scripts/compute_experiments.sh` sets `NCCL_P2P_DISABLE=1` for DDP.
 
-### What the model looks at
+## Deployment (`serve/`)
 
-Grad-CAM (CNNs) and attention rollout (ViT) on 20 fixed PlantDoc-test images: `python -m src.explain --runs runs/e0/... runs/e2/... runs/e3/...`
-→ `reports/figures/saliency_<model>.png`. Hypothesis to check: E0 attends to background and leaf edges, while E2/E3 attend to lesions.
-
-## Failure analysis
-
-_Fill in after the sweep from per-class recall and confusion matrices in `metrics.json` and the saliency figures. One paragraph per failure mode, each with example images:_
-- _Confusable diseases (e.g. tomato early vs. late blight, septoria vs. bacterial spot)._
-- _Multiple leaves or cluttered frames: PlantDoc images often contain several leaves, while PlantVillage has exactly one._
-- _Healthy-class over-prediction under heavy blur or low light._
-- _Calibration: field-domain ECE vs. lab-domain ECE. Overconfident wrong answers are what the 0.5 "unsure" threshold is meant to catch._
-
-## Compute-cost experiments
-
-Results are in `reports/results.md` ("Compute experiments"), produced by `make compute`.
-
-| Experiment | What is recorded |
-|---|---|
-| FP32 vs AMP (bf16), ResNet-50 and ViT-S | images/s, peak GPU memory, PlantDoc acc |
-| Gradient checkpointing, ViT-S | memory saved vs. epoch time added |
-| DDP 1 / 2 / 4 GPUs | throughput, scaling efficiency = thr_N / (N · thr_1), accuracy with linear lr scaling. On RunPod 4×A40 pods NCCL peer-to-peer hangs at the first collective; `scripts/compute_experiments.sh` sets `NCCL_P2P_DISABLE=1` for DDP. The 1-GPU DDP run reproduces the sweep's E0 run on a different pod to 4 decimals. |
-| `torch.profiler`, 1 epoch | top-5 ops (`profile_top5.txt`), fraction of step time spent waiting on the data loader |
-
-## Deployment
-
-The best EfficientNet-B0 (picked by PlantDoc-val) is exported to ONNX, then quantized to INT8 with ONNX Runtime static quantization (QDQ, per-channel, calibrated on 500 PlantDoc-train images).
-`python -m serve.export` writes `reports/deploy.md`.
+_Pending._ The best EfficientNet-B0 (chosen on PlantDoc val) is exported to ONNX and quantized to INT8 with ONNX Runtime
+static quantization (QDQ, per-channel, calibrated on 500 PlantDoc-train images); `python -m serve.export` writes
+`reports/deploy.md` with FP32 vs INT8 accuracy, size and CPU latency (p50/p95, batch 1, 4 threads).
 
 | Model | PlantDoc acc | Size (MB) | CPU p50 (ms) | CPU p95 (ms) |
 |---|---|---|---|---|
 | EfficientNet-B0 FP32 | — | — | — | — |
 | EfficientNet-B0 INT8 | — | — | — | — |
 
-Latency is measured at batch 1 with 4 intra-op threads (phone-class budget). The CPU model is recorded in `reports/deploy.json`.
-Demo: Gradio on Hugging Face Spaces (`serve/app.py`, link TBD). It shows top-3 predictions with a Grad-CAM overlay, and answers **"unsure"** when the top confidence is below 0.5.
-A FastAPI service with a Dockerfile is in `serve/`.
+Demo: Gradio app (`serve/app.py`) for Hugging Face Spaces: top-3 diseases with confidence, a Grad-CAM overlay, and
+**"unsure"** below 0.5 confidence. A FastAPI service with a Dockerfile is in `serve/`.
 
 ## Reproducibility
 
-- Every run is launched from a YAML config (`configs/`) plus CLI overrides. The resolved config is saved next to the checkpoint (`runs/<exp>/<model>/seed<k>/config.yaml`).
-- Seeds are fixed: Python, NumPy, torch and DataLoader workers. The PlantDoc-val split uses its own fixed seed, so it's the same for all runs. Few-shot draws vary with the training seed.
-- Runs log to MLflow (`mlflow.db`; view with `mlflow ui --backend-store-uri sqlite:///mlflow.db`). Switch to W&B with `logging.backend=wandb`.
-- `pytest` covers metrics, splits, the class map, configs, model shapes and sizes, compositing, dedup, and an end-to-end CPU smoke test (train → eval → fine-tune → report) on synthetic images.
+- Every run is launched from a YAML config plus CLI overrides; the resolved config and its hash are saved next to the
+  checkpoint, and a run directory with a finished run is never overwritten.
+- Seeds are fixed (Python, NumPy, torch, DataLoader workers); data splits use their own fixed seed. **The same config
+  run on two different pods, with independently downloaded data, gives identical results to 4 decimals.**
+- Runs log to MLflow (`mlflow.db`). Every number in this README comes from `reports/results.md`, generated from the
+  per-run `metrics.json` and saved per-image predictions (`preds_*.npz`), so tables and significance tests can be
+  rebuilt without retraining. Raw run files are on the `results` branch.
+- 45+ tests, including an end-to-end CPU smoke test (train → eval → fine-tune → report → failure analysis).
 
 ## Evaluation protocol (and how it departs from the brief)
 
-- **Headline = PlantDoc test accuracy**, not the gap (see above). The gap is still reported in every table.
-- **Checkpoint selection without field data for lab-only rows.** The brief early-stops on PlantDoc val, which lets
-  field labels pick the "lab-only" checkpoint. E0–E4 therefore select on a **PlantVillage val** split (10% of
-  PlantVillage train, grouped by physical leaf). The PlantDoc-val-selected checkpoint is still evaluated and shown as
-  an optimistic secondary column. E5–E7 use field labels for training anyway, so they select on PlantDoc val.
-- **What each row actually uses from PlantDoc:** E0/E1 nothing; E2 unlabeled PlantDoc-train crops (backgrounds);
-  E3 unlabeled PlantDoc-train images (CycleGAN field domain); **E4 PlantDoc-train labels** (the CVAE is class-conditioned);
-  E5/E6 k labeled images per class; E7 all of PlantDoc train. No generator, background pool or calibration set ever
-  touches PlantDoc val or test.
-- **Small test set.** 236 images (~9 per class): per-class recall is reported but is noise-level. Every test label
-  was reviewed by hand (`reports/audit/test_label_review.csv`); accuracy on the reviewed labels is reported alongside.
-- **Significance.** Experiments are compared on the same test images with a paired bootstrap (primary) and exact
-  McNemar (supplementary), **Holm-corrected** across all comparisons (`reports/paired_tests.csv`). Differences under
-  ~5 points are generally not detectable with 236 images.
-- **Secondary field test for E0/E1.** These never see a PlantDoc pixel, so they are also scored on the ~1.9k PlantDoc
-  train images (labelled *secondary* in the results). E2–E4 are excluded because their augmentation used those images.
-- **ViT vs CNNs: pretraining confound.** The main ViT-S checkpoint was pretrained on ImageNet-21k, the CNNs on
-  ImageNet-1k. A second ViT-S with the **same architecture and AugReg recipe but ImageNet-1k only**
-  (`vit_s16_in1k`) is run on E0–E2, so the report separates *architecture* (ViT-1k vs CNNs) from *pretraining
-  data* (ViT-21k vs ViT-1k). Architecture claims are made only from cross-model paired tests on the same images.
-- **Background-only test for every architecture** (3 seeds each). It shows how far each architecture *can*
-  exploit background statistics; how much a lab-trained model *relies* on them is read from E2−E0 and the
-  saliency maps.
-- **Chance levels** for the background-only test: uniform 1/27 = 0.037; **majority-class baseline 0.156** (the
-  largest PlantVillage test class); the latter is the relevant baseline.
+- **Headline = PlantDoc test accuracy**, not the gap: fine-tuning on field images also lowers lab accuracy, which
+  shrinks the gap without any field improvement.
+- **Lab-only rows choose checkpoints on lab data.** The brief early-stops on PlantDoc val, which lets field labels pick
+  the "lab-only" checkpoint (up to ~13 points optimistic on test, ViT E3). E0–E4 select on a leaf-grouped PlantVillage val split; the
+  field-val-selected number is still reported as a secondary column.
+- **What each row uses from PlantDoc:** E0/E1 nothing; E2 unlabeled train crops (backgrounds); E3 unlabeled train
+  images (CycleGAN); **E4 train labels** (the CVAE is class-conditioned); E5/E6 k labeled images per class; E7 all of
+  PlantDoc train.
+- **Significance:** paired bootstrap (primary) and exact McNemar on the same test images, one Holm family across all
+  within-model and across-model comparisons. Differences under ~5 points are not detectable with 236 images.
+- **Pretraining confound:** architecture claims compare ViT-S (ImageNet-1k, same recipe) with the 1k-pretrained CNNs.
+- **Secondary field test** for E0/E1 only, on the ~1.9k PlantDoc train images they never saw.
 
-## Design decisions and deviations from the brief
+## Design decisions
 
-- **Label space = shared classes** for every experiment, including E7, so all rows are scored on the same task.
-- **ViT normalization:** the AugReg ViT-S/16 was pretrained with mean/std 0.5, so its own stats are used. The CNNs use ImageNet stats.
-- **CycleGAN epoch = |PlantDoc train| iterations** (~1.8k), with PlantVillage images sampled at random. PlantVillage is about 20× larger, so a full pass over it per epoch would blow the 10–15 GPU-hour budget.
-- **CVAE is conditioned on (class, domain)** with domain-balanced sampling. It is trained per crop group and sampled in the *field* domain, 500 images per class.
-- **Fine-tuning hyperparameters (E5/E6)** were fixed before seeing any results: lr × 0.3, batch 32, 30 epochs, 2 warm-up epochs, early stopping on val.
-- The brief names the *cropped* PlantDoc classification set. `scripts/download_data.sh` clones the GitHub repo. If you use a cropped export instead, point `paths.plantdoc_dir` at it; the folder structure is the same.
+- Label space = the 27 shared classes for every experiment, including E7.
+- ViT uses its own pretraining normalization (mean/std 0.5); the CNNs use ImageNet statistics.
+- CycleGAN "epoch" = one pass over PlantDoc train (1,859 iterations), lab images sampled at random; 100 epochs, cycle 10,
+  identity 5. Translations of lab-val images are excluded from E3 training.
+- CVAE conditioned on (class, domain) with domain-balanced sampling, one per crop group, sampled in the field domain
+  (500 per class); retrained after the lab val split was introduced.
+- Strong augmentation: RandAugment (n=2, m=9) replaces color jitter and rotation, plus MixUp/CutMix (α 0.2 / 1.0).
+- E5/E6 fine-tuning: lr × 0.3, batch 32, up to 30 epochs, fixed before any results.
 
 ## Limitations
 
-- PlantDoc test is small and noisy: web-scraped, with some label errors and multi-leaf images. Per-class numbers for rare classes are unreliable.
-- Coverage is limited to the shared classes. The model has never seen other crops and diseases and will force them into a known class. The "unsure" threshold helps but doesn't solve open-set inputs.
-- Generative models are trained on PlantDoc *train* images, so E3 and E4 see unlabeled field-domain data. They aren't "zero field data" methods, and the comparison with E5 should be read that way.
-- Latency is on a desktop/server CPU with constrained threads, not a measured phone (TFLite on Android is optional and not yet done).
+- **Small field test set** (236 images, 4–12 per class): only effects of ~5+ points are detectable; per-class recall is
+  noise-level. The ~1.9k secondary pool covers E0/E1 only.
+- **Closed label space.** The model has only seen 27 classes and will force anything else into one of them; the
+  "unsure" threshold helps but is no open-set detector.
+- **"Lab-only" is not zero field data for E2–E4**: they use unlabeled (E2, E3) or labeled (E4) PlantDoc-train images.
+- **Compute and DDP results are single-seed**; the DDP accuracy trend with batch size is within noise.
+- **Saliency is qualitative** (20 images; no leaf masks exist for PlantDoc to quantify background attention).
+- Latency will be measured on a server CPU with a constrained thread count, not on a phone (TFLite is optional and not done).
 
-## Compute budget
+## Compute used
 
-| Item | Estimate |
-|---|---|
-| Classifiers: 3 models × 10 runs (E0–E7, E5 at 3 values of k) × 3 seeds, 1–2 A40-hours each | 50–70 GPU-h (use 1 seed while exploring) |
-| CycleGAN | 10–15 GPU-h |
-| CVAE | 3–5 GPU-h |
-| DDP scaling (multi-GPU RunPod pod) | ~4 h |
-
-Prototype on Colab or a local GPU, and run the final sweeps on RunPod (A40 or A100).
+About **60 A40 GPU-hours (~$40 on RunPod)**: main sweep ~27 h (90 runs at 15–45 min each, far below the brief's
+1–2 h estimate), CycleGAN 7 h, CVAE ~4 h (×2), follow-ups 5.5 h, exploratory runs and analysis ~10 h, and ~1 h on a
+4×A40 pod for DDP.
 
 ## Repo layout
 
 ```
-configs/      base.yaml, experiments/e0–e7, compute/, cyclegan.yaml, cvae.yaml, deploy.yaml, class_map.csv
-src/data/     prepare (manifests, dedup, splits), datasets, transforms, compositing
+configs/      base.yaml, experiments/e0–e7, compute/, audit/shortcut.yaml, cyclegan.yaml, cvae.yaml, deploy.yaml, class_map.csv
+src/data/     prepare (splits, dedup, contamination), audit, datasets, transforms, compositing (+ cache), leaf grouping, review
 src/models/   classifier (timm), cyclegan, cvae
-src/          train.py, eval.py, metrics.py, train_cyclegan.py, train_cvae.py, generate.py, fid.py, explain.py, report.py
-serve/        export (ONNX + INT8 + latency), predictor, Gradio app, FastAPI api, Dockerfile
+src/          train, eval, metrics, report (paired tests, Holm), failure, curves, explain, shortcut, fid,
+              train_cyclegan, train_cvae, generate, utils
+serve/        ONNX export + INT8 + latency, predictor, Gradio app, FastAPI, Dockerfile
+scripts/      pod_setup, run_experiments (sweep), followups, analysis, compute_experiments, push_results
 notebooks/    analysis only
-reports/      figures + results tables (generated)
+reports/      tables, figures, audit, failure analysis (generated)
 tests/        pytest
-scripts/      download, full sweep, compute experiments
 ```
