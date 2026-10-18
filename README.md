@@ -1,5 +1,7 @@
 # Crop disease detection that works in real fields
 
+[![Open the demo on Hugging Face Spaces](https://huggingface.co/datasets/huggingface/badges/resolve/main/open-in-hf-spaces-md.svg)](https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo)
+
 > **Result:** classifiers trained on lab photos (PlantVillage, 99% accuracy) reach only **24–38% on field photos**
 > (PlantDoc, 27 shared classes, 3 seeds). **Generative augmentation recovers little of that gap**: CycleGAN 10–16% of
 > the achievable gain for CNNs, a conditional VAE ≤ 7%, neither significant after Holm correction. **Ten real field
@@ -194,6 +196,11 @@ instead of torchvision's resize.
 inference on CPU; packaged by `scripts/make_space.sh`): top-3 diseases with confidence, a Grad-CAM overlay, and
 **"unsure"** below 0.5 confidence. A non-leaf test image is answered "unsure" (top confidence 16%). A FastAPI service
 with a Dockerfile is in `serve/`.
+
+[![Demo: top-3 prediction with Grad-CAM overlay](reports/figures/demo.jpeg)](https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo)
+
+*A field photo of potato late blight (image: EPPO Global Database, gd.eppo.int): the top-1 class is correct but at 33%
+confidence, so the demo answers "unsure"; Grad-CAM centres on the lesioned leaf.*
 
 ## Reproducibility
 
