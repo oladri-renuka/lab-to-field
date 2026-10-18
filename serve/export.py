@@ -129,14 +129,18 @@ def main() -> None:
         if v.method == "Percentile":
             extra["CalibPercentile"] = 99.999
         ops = ["Conv", "Gemm", "MatMul"] if v.ops == "conv" else None
-        print(f"[deploy] variant {v.name}: calibration {v.method}, quantized ops {'Conv/Gemm/MatMul only' if ops else 'all'}",
-              flush=True)
+        # Histogram calibrators (Percentile, Entropy) keep every activation of every calibration image in RAM:
+        # 500 EfficientNet images exceed a 50 GB pod, so they use a smaller subset of the same calibration draw.
+        n_cal = len(calib) if v.method == "MinMax" else min(len(calib), int(dcfg.calibration_images_histogram))
+        print(f"[deploy] variant {v.name}: calibration {v.method} on {n_cal} images, quantized ops "
+              f"{'Conv/Gemm/MatMul only' if ops else 'all'}", flush=True)
         try:
-            quantize_static(str(pre), str(path), ImageReader(calib.path.tolist(), "input", size, mean, std),
+            quantize_static(str(pre), str(path), ImageReader(calib.path.tolist()[:n_cal], "input", size, mean, std),
                             quant_format=QuantFormat.QDQ, per_channel=True, activation_type=QuantType.QUInt8,
                             weight_type=QuantType.QInt8, calibrate_method=getattr(CalibrationMethod, v.method),
                             op_types_to_quantize=ops, extra_options=extra)
-            variants[v.name] = {"method": v.method, "ops": v.ops, **evaluate(path, v.name, on_test=False)}
+            variants[v.name] = {"method": v.method, "ops": v.ops, "calibration_images": n_cal,
+                                **evaluate(path, v.name, on_test=False)}
             print(f"[deploy]   {v.name}: PlantDoc-val acc {variants[v.name]['pd_val_acc']:.3f}, "
                   f"p50 {variants[v.name]['latency_p50_ms']:.1f} ms", flush=True)
         except Exception as e:  # one failing variant must not sink the export
@@ -170,8 +174,8 @@ def main() -> None:
                     for t, name in (("fp32", "FP32"), ("int8", f"INT8 ({best})")))
           + f"\nCPU: {report['cpu']}, {report['threads']} threads, batch 1, onnxruntime {report['onnxruntime']}.\n\n"
           "INT8 variants tried (chosen on PlantDoc-val; test not used for the choice):\n\n"
-          "| Variant | Calibration | Quantized ops | PlantDoc-val acc | Size (MB) | p50 (ms) |\n|---|---|---|---|---|---|\n"
-          + "".join(f"| {k} | {v['method']} | {'Conv/Gemm/MatMul' if v['ops'] == 'conv' else 'all'} | {v['pd_val_acc']:.3f} | "
+          "| Variant | Calibration | Calib. images | Quantized ops | PlantDoc-val acc | Size (MB) | p50 (ms) |\n|---|---|---|---|---|---|---|\n"
+          + "".join(f"| {k} | {v['method']} | {v['calibration_images']} | {'Conv/Gemm/MatMul' if v['ops'] == 'conv' else 'all'} | {v['pd_val_acc']:.3f} | "
                     f"{v['size_mb']:.1f} | {v['latency_p50_ms']:.1f} |\n" for k, v in variants.items()))
     Path("reports/deploy.md").write_text(md)
     print(md)

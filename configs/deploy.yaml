@@ -2,7 +2,8 @@ checkpoint: auto          # auto = the EfficientNet-B0 run with the best PlantDo
 deploy_model: efficientnet_b0
 export_dir: serve/artifacts
 opset: 17
-calibration_images: 500     # from PlantDoc *train split*
+calibration_images: 500     # from PlantDoc *train split* (MinMax)
+calibration_images_histogram: 128   # Percentile/Entropy keep all activations in RAM; 500 images exceed 50 GB
 calibration_seed: 0
 latency: {warmup: 50, iters: 500, threads: 4}
 app: {unsure_threshold: 0.5, top_k: 3}
