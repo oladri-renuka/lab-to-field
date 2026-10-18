@@ -163,3 +163,17 @@ Majority-class baseline 0.156; uniform chance 0.037.
 This measures how well each architecture *can* exploit background statistics. How much a lab-trained model *relies* on them is read from the E2−E0 gain and the saliency figures.
 
 
+## Compute experiments
+
+| run              | model    |   world |   global_batch |   img_per_s |   peak_mem_gb |   epoch_s |   data_wait |   pd_acc |   scaling_eff |
+|:-----------------|:---------|--------:|---------------:|------------:|--------------:|----------:|------------:|---------:|--------------:|
+| compute_bf16     | resnet50 |       1 |            128 |     684.211 |         6.16  |    38.912 |       0.032 |    0.288 |       nan     |
+| compute_bf16     | vit_s16  |       1 |            128 |    1045.67  |         4.857 |    25.472 |       0.241 |    0.369 |       nan     |
+| compute_fp32     | resnet50 |       1 |            128 |     411.833 |        11.419 |    64.648 |       0.017 |    0.297 |       nan     |
+| compute_fp32     | vit_s16  |       1 |            128 |     415.885 |         8.075 |    64.018 |       0.019 |    0.331 |       nan     |
+| compute_gc_False | vit_s16  |       1 |            128 |    1039.76  |         4.857 |    25.606 |       0.232 |    0.364 |       nan     |
+| compute_gc_True  | vit_s16  |       1 |            128 |     916.942 |         1.315 |    29.036 |       0.063 |    0.364 |       nan     |
+| compute_profile  | resnet50 |       1 |            128 |     538.761 |         6.16  |    49.417 |       0.035 |    0.25  |       nan     |
+| ddp_ws1          | resnet50 |       1 |            128 |     686.539 |         6.16  |    38.78  |       0.028 |    0.288 |         1     |
+| ddp_ws2          | resnet50 |       2 |            256 |    1276.9   |         6.257 |    20.851 |       0.052 |    0.258 |         0.93  |
+| ddp_ws4          | resnet50 |       4 |            512 |    2423.48  |         6.257 |    10.986 |       0.095 |    0.237 |         0.882 |

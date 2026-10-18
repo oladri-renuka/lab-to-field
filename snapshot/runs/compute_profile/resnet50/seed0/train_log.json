@@ -1,0 +1,23 @@
+{
+  "history": [
+    {
+      "train_loss": 1.6357979774475098,
+      "images_per_sec": 538.7610573873626,
+      "data_wait_frac": 0.03469567783664569,
+      "peak_mem_gb": 6.16022784,
+      "epoch_time_s": 49.4170832040254,
+      "epoch": 0,
+      "val_acc": 0.8706086956521739,
+      "lr": 0.0,
+      "images_per_sec_global": 538.7610573873626,
+      "val_pd_val": 0.23225806451612904,
+      "val_pv_val": 0.8706086956521739
+    }
+  ],
+  "best_epoch": 0,
+  "best_val_acc": 0.8706086956521739,
+  "selected_on": "pv_val",
+  "world_size": 1,
+  "global_batch": 128,
+  "lr": 0.0003
+}
