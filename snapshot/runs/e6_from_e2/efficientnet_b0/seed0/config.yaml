@@ -1,0 +1,90 @@
+seed: 0
+exp_id: e6_from_e2
+model: efficientnet_b0
+output_dir: runs
+paths:
+  raw_dir: data/raw
+  processed_dir: data/processed
+  plantdoc_dir: data/raw/PlantDoc-Dataset
+  class_map: configs/class_map.csv
+  generated_dir: data/generated
+  backgrounds_dir: null
+data:
+  hf_id: mohanty/PlantVillage
+  img_size: 224
+  num_workers: 8
+  val_frac: 0.2
+  pv_val_frac: 0.1
+  split_seed: 0
+  dedup_hamming: 4
+  train_sources:
+  - pd_fewshot
+  fewshot_k: 10
+  max_train_samples: null
+aug:
+  kind: baseline
+  mixup: false
+  mixup_alpha: 0.2
+  cutmix_alpha: 1.0
+  mixup_switch_prob: 0.5
+composite:
+  canvas: 256
+  leaf_scale:
+  - 0.45
+  - 0.95
+  rotation: 45
+  leaf_blur:
+  - 0.0
+  - 1.0
+  bg_blur:
+  - 0.0
+  - 2.0
+  bg_crop_scale:
+  - 0.15
+  - 0.6
+  bg_max_side: 512
+  mask_threshold: 12
+  mask_repair: 7
+models:
+  resnet50:
+    timm_name: resnet50.a1_in1k
+    lr: 0.0003
+  efficientnet_b0:
+    timm_name: efficientnet_b0.ra_in1k
+    lr: 0.0003
+  vit_s16:
+    timm_name: vit_small_patch16_224.augreg_in21k_ft_in1k
+    lr: 0.0001
+train:
+  epochs: 30
+  warmup_epochs: 2
+  batch_size: 32
+  base_batch: 128
+  scale_lr: false
+  lr_mult: 0.3
+  weight_decay: 0.05
+  label_smoothing: 0.1
+  min_lr_ratio: 0.0
+  early_stop_patience: 8
+  select_on: pd_val
+  precision: bf16
+  grad_checkpointing: false
+  init_from: runs/e2/efficientnet_b0/seed0/best.pt
+  pretrained: true
+  grad_clip: null
+  log_every: 50
+  deterministic: false
+profile:
+  enabled: false
+  wait: 5
+  warmup: 5
+  active: 20
+logging:
+  backend: mlflow
+  project: crop-disease-lab2field
+eval:
+  batch_size: 256
+  secondary_pool: false
+  ece_bins: 15
+  bootstrap: 1000
+init_experiment: e2
