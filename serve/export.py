@@ -61,6 +61,23 @@ def accuracy(session, paths, labels, size, mean, std, desc: str = "accuracy") ->
     return float((np.asarray(preds) == np.asarray(labels)).mean())
 
 
+OPS_LABEL = {"all": "all", "conv": "Conv/Gemm/MatMul", "conv_nodw": "Conv/Gemm/MatMul, depthwise kept FP32"}
+
+
+def depthwise_convs(model_path: Path) -> list[str]:
+    """Names of grouped (depthwise) Conv nodes: their per-channel ranges make 8-bit PTQ lossy on EfficientNet."""
+    import onnx
+
+    g = onnx.load(str(model_path)).graph
+    out = []
+    for n in g.node:
+        if n.op_type == "Conv":
+            group = next((a.i for a in n.attribute if a.name == "group"), 1)
+            if group > 1:
+                out.append(n.name)
+    return out
+
+
 def pick_checkpoint(model: str, runs: Path = Path("runs")) -> str:
     """Best run of `model` by PlantDoc-VAL accuracy of its selected checkpoint (test is never looked at)."""
     best = None
@@ -128,17 +145,18 @@ def main() -> None:
         extra = {"ActivationSymmetric": False, "WeightSymmetric": True}
         if v.method == "Percentile":
             extra["CalibPercentile"] = 99.999
-        ops = ["Conv", "Gemm", "MatMul"] if v.ops == "conv" else None
+        ops = ["Conv", "Gemm", "MatMul"] if v.ops in ("conv", "conv_nodw") else None
+        exclude = depthwise_convs(pre) if v.ops == "conv_nodw" else []
         # Histogram calibrators (Percentile, Entropy) keep every activation of every calibration image in RAM:
         # 500 EfficientNet images exceed a 50 GB pod, so they use a smaller subset of the same calibration draw.
         n_cal = len(calib) if v.method == "MinMax" else min(len(calib), int(dcfg.calibration_images_histogram))
         print(f"[deploy] variant {v.name}: calibration {v.method} on {n_cal} images, quantized ops "
-              f"{'Conv/Gemm/MatMul only' if ops else 'all'}", flush=True)
+              f"{OPS_LABEL[v.ops]}" + (f" ({len(exclude)} depthwise convs kept in FP32)" if exclude else ""), flush=True)
         try:
             quantize_static(str(pre), str(path), ImageReader(calib.path.tolist()[:n_cal], "input", size, mean, std),
                             quant_format=QuantFormat.QDQ, per_channel=True, activation_type=QuantType.QUInt8,
                             weight_type=QuantType.QInt8, calibrate_method=getattr(CalibrationMethod, v.method),
-                            op_types_to_quantize=ops, extra_options=extra)
+                            op_types_to_quantize=ops, nodes_to_exclude=exclude, extra_options=extra)
             variants[v.name] = {"method": v.method, "ops": v.ops, "calibration_images": n_cal,
                                 **evaluate(path, v.name, on_test=False)}
             print(f"[deploy]   {v.name}: PlantDoc-val acc {variants[v.name]['pd_val_acc']:.3f}, "
@@ -175,7 +193,7 @@ def main() -> None:
           + f"\nCPU: {report['cpu']}, {report['threads']} threads, batch 1, onnxruntime {report['onnxruntime']}.\n\n"
           "INT8 variants tried (chosen on PlantDoc-val; test not used for the choice):\n\n"
           "| Variant | Calibration | Calib. images | Quantized ops | PlantDoc-val acc | Size (MB) | p50 (ms) |\n|---|---|---|---|---|---|---|\n"
-          + "".join(f"| {k} | {v['method']} | {v['calibration_images']} | {'Conv/Gemm/MatMul' if v['ops'] == 'conv' else 'all'} | {v['pd_val_acc']:.3f} | "
+          + "".join(f"| {k} | {v['method']} | {v['calibration_images']} | {OPS_LABEL[v['ops']]} | {v['pd_val_acc']:.3f} | "
                     f"{v['size_mb']:.1f} | {v['latency_p50_ms']:.1f} |\n" for k, v in variants.items()))
     Path("reports/deploy.md").write_text(md)
     print(md)
