@@ -81,6 +81,8 @@ def collect(runs: Path) -> pd.DataFrame:
         m = json.loads(f.read_text())
         if "pd_test" not in m:  # e.g. the background-only shortcut run
             continue
+        if str(m["exp_id"]).startswith(("compute_", "ddp")):  # cost experiments: only in the compute section,
+            continue  # never in the results table or the Holm family
         sec = f.with_name("metrics_pd_val_selected.json")
         m2 = json.loads(sec.read_text()) if sec.exists() else None
         val = m.get("val_acc") if isinstance(m.get("val_acc"), dict) else {"pd_val": m.get("pd_val_acc")}
