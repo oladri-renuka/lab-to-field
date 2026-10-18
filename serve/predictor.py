@@ -21,8 +21,9 @@ def preprocess(img: Image.Image, size: int, mean, std) -> np.ndarray:
 
 
 class Predictor:
-    def __init__(self, model_dir: Path = ARTIFACTS, model_file: str = "model_int8.onnx", threads: int | None = None):
+    def __init__(self, model_dir: Path = ARTIFACTS, model_file: str | None = None, threads: int | None = None):
         self.meta = json.loads((model_dir / "meta.json").read_text())
+        model_file = model_file or self.meta.get("app_model", "model_int8.onnx")  # set by serve.export
         opts = ort.SessionOptions()
         if threads:
             opts.intra_op_num_threads = threads

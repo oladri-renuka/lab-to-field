@@ -2,8 +2,10 @@
 
     python -m serve.export --config configs/deploy.yaml
 
-Calibration: 500 PlantDoc *train-split* images. Reports PlantDoc-test accuracy, size (MB) and CPU
-latency p50/p95 at batch 1 -> reports/deploy.md + reports/deploy.json.
+EfficientNet (SiLU + squeeze-excite) is fragile under naive INT8, so several standard quantization variants are
+tried (calibration method x which ops are quantized). The variant is chosen on PlantDoc-VAL accuracy; PlantDoc-test
+accuracy is reported only for FP32 and the chosen variant. Calibration: 500 PlantDoc *train-split* images.
+-> reports/deploy.md + reports/deploy.json (all variants listed).
 """
 from __future__ import annotations
 
@@ -16,7 +18,8 @@ from pathlib import Path
 import numpy as np
 import onnxruntime as ort
 import torch
-from onnxruntime.quantization import CalibrationDataReader, QuantFormat, QuantType, quantize_static
+from onnxruntime.quantization import (CalibrationDataReader, CalibrationMethod, QuantFormat, QuantType,
+                                      quantize_static)
 from onnxruntime.quantization.shape_inference import quant_pre_process
 
 from serve.predictor import preprocess
@@ -101,32 +104,75 @@ def main() -> None:
     step("exporting ONNX FP32")
     torch.onnx.export(model, torch.randn(1, 3, size, size), fp32, input_names=["input"], output_names=["logits"],
                       dynamic_axes={"input": {0: "batch"}, "logits": {0: "batch"}}, opset_version=dcfg.opset, dynamo=False)
-    step(f"INT8 static quantization, calibrating on {dcfg.calibration_images} PlantDoc-train images")
+    step(f"INT8 static quantization: {len(dcfg.quant_variants)} variants, calibration on {dcfg.calibration_images} "
+         f"PlantDoc-train images, selection on PlantDoc-val")
     quant_pre_process(str(fp32), str(pre))
     calib = read_manifest(cfg, "pd_train").sample(n=dcfg.calibration_images, random_state=dcfg.calibration_seed)
-    quantize_static(str(pre), str(int8), ImageReader(calib.path.tolist(), "input", size, mean, std),
-                    quant_format=QuantFormat.QDQ, per_channel=True,
-                    activation_type=QuantType.QUInt8, weight_type=QuantType.QInt8)
-    pre.unlink()
-
-    test = read_manifest(cfg, "pd_test")
+    val, test = read_manifest(cfg, "pd_val"), read_manifest(cfg, "pd_test")
     opts = ort.SessionOptions()
     opts.intra_op_num_threads = dcfg.latency.threads
     x = np.random.default_rng(0).standard_normal((1, 3, size, size)).astype(np.float32)
-    report = {"cpu": platform.processor() or platform.machine(), "threads": dcfg.latency.threads,
-              "onnxruntime": ort.__version__, "n_test": len(test)}
-    step(f"benchmark FP32 vs INT8: PlantDoc-test accuracy, size, latency ({dcfg.latency.iters} runs, batch 1, "
-         f"{dcfg.latency.threads} threads)")
-    for tag, path in (("fp32", fp32), ("int8", int8)):
+
+    def evaluate(path: Path, tag: str, on_test: bool) -> dict:
         sess = ort.InferenceSession(str(path), opts, providers=["CPUExecutionProvider"])
         p50, p95 = latency_ms(sess, x, dcfg.latency.warmup, dcfg.latency.iters)
-        report[tag] = {"pd_test_acc": accuracy(sess, test.path, test.label, size, mean, std, f"{tag} accuracy"),
-                       "size_mb": path.stat().st_size / 2**20, "latency_p50_ms": p50, "latency_p95_ms": p95}
+        r = {"pd_val_acc": accuracy(sess, val.path, val.label, size, mean, std, f"{tag} val"),
+             "size_mb": path.stat().st_size / 2**20, "latency_p50_ms": p50, "latency_p95_ms": p95}
+        if on_test:
+            r["pd_test_acc"] = accuracy(sess, test.path, test.label, size, mean, std, f"{tag} test")
+        return r
+
+    variants = {}
+    for v in dcfg.quant_variants:
+        path = out / f"model_int8_{v.name}.onnx"
+        extra = {"ActivationSymmetric": False, "WeightSymmetric": True}
+        if v.method == "Percentile":
+            extra["CalibPercentile"] = 99.999
+        ops = ["Conv", "Gemm", "MatMul"] if v.ops == "conv" else None
+        print(f"[deploy] variant {v.name}: calibration {v.method}, quantized ops {'Conv/Gemm/MatMul only' if ops else 'all'}",
+              flush=True)
+        try:
+            quantize_static(str(pre), str(path), ImageReader(calib.path.tolist(), "input", size, mean, std),
+                            quant_format=QuantFormat.QDQ, per_channel=True, activation_type=QuantType.QUInt8,
+                            weight_type=QuantType.QInt8, calibrate_method=getattr(CalibrationMethod, v.method),
+                            op_types_to_quantize=ops, extra_options=extra)
+            variants[v.name] = {"method": v.method, "ops": v.ops, **evaluate(path, v.name, on_test=False)}
+            print(f"[deploy]   {v.name}: PlantDoc-val acc {variants[v.name]['pd_val_acc']:.3f}, "
+                  f"p50 {variants[v.name]['latency_p50_ms']:.1f} ms", flush=True)
+        except Exception as e:  # one failing variant must not sink the export
+            print(f"[deploy]   {v.name} failed: {e}", flush=True)
+    pre.unlink()
+    if not variants:
+        raise SystemExit("every quantization variant failed")
+    best = max(variants, key=lambda k: (round(variants[k]["pd_val_acc"], 3), -variants[k]["latency_p50_ms"]))
+    (out / f"model_int8_{best}.onnx").replace(int8)
+    for k in variants:
+        (out / f"model_int8_{k}.onnx").unlink(missing_ok=True)
+
+    step(f"benchmark FP32 vs INT8 ({best}): PlantDoc val + test accuracy, size, latency ({dcfg.latency.iters} runs, "
+         f"batch 1, {dcfg.latency.threads} threads)")
+    report = {"cpu": platform.processor() or platform.machine(), "threads": dcfg.latency.threads,
+              "onnxruntime": ort.__version__, "n_val": len(val), "n_test": len(test),
+              "checkpoint": str(dcfg.checkpoint), "int8_variant": best, "variants": variants,
+              "fp32": evaluate(fp32, "fp32", on_test=True), "int8": evaluate(int8, f"int8 {best}", on_test=True)}
+    drop = report["fp32"]["pd_val_acc"] - report["int8"]["pd_val_acc"]
+    app_model = "model_int8.onnx" if drop <= float(dcfg.max_int8_val_drop) else "model_fp32.onnx"
+    report["app_model"] = app_model
+    meta["app_model"] = app_model
+    (out / "meta.json").write_text(json.dumps(meta, indent=2))
     save_json(report, "reports/deploy.json")
-    md = ("| Model | PlantDoc acc | Size (MB) | p50 (ms) | p95 (ms) |\n|---|---|---|---|---|\n"
-          + "".join(f"| EfficientNet-B0 {t.upper()} | {report[t]['pd_test_acc']:.3f} | {report[t]['size_mb']:.1f} | "
-                    f"{report[t]['latency_p50_ms']:.1f} | {report[t]['latency_p95_ms']:.1f} |\n" for t in ("fp32", "int8"))
-          + f"\nCPU: {report['cpu']}, {report['threads']} threads, batch 1, onnxruntime {report['onnxruntime']}.\n")
+    md = (f"Deployed checkpoint: `{dcfg.checkpoint}` (best EfficientNet-B0 by PlantDoc-val accuracy).\n"
+          f"The demo serves **{app_model}** (INT8 is used only if it loses at most "
+          f"{float(dcfg.max_int8_val_drop):.0%} PlantDoc-val accuracy; it lost {drop:.1%}).\n\n"
+          "| Model | PlantDoc-val acc | PlantDoc-test acc | Size (MB) | CPU p50 (ms) | CPU p95 (ms) |\n|---|---|---|---|---|---|\n"
+          + "".join(f"| EfficientNet-B0 {name} | {report[t]['pd_val_acc']:.3f} | {report[t]['pd_test_acc']:.3f} | "
+                    f"{report[t]['size_mb']:.1f} | {report[t]['latency_p50_ms']:.1f} | {report[t]['latency_p95_ms']:.1f} |\n"
+                    for t, name in (("fp32", "FP32"), ("int8", f"INT8 ({best})")))
+          + f"\nCPU: {report['cpu']}, {report['threads']} threads, batch 1, onnxruntime {report['onnxruntime']}.\n\n"
+          "INT8 variants tried (chosen on PlantDoc-val; test not used for the choice):\n\n"
+          "| Variant | Calibration | Quantized ops | PlantDoc-val acc | Size (MB) | p50 (ms) |\n|---|---|---|---|---|---|\n"
+          + "".join(f"| {k} | {v['method']} | {'Conv/Gemm/MatMul' if v['ops'] == 'conv' else 'all'} | {v['pd_val_acc']:.3f} | "
+                    f"{v['size_mb']:.1f} | {v['latency_p50_ms']:.1f} |\n" for k, v in variants.items()))
     Path("reports/deploy.md").write_text(md)
     print(md)
     step.done("wrote reports/deploy.md, reports/deploy.json")

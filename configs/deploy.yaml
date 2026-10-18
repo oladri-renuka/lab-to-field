@@ -6,3 +6,13 @@ calibration_images: 500     # from PlantDoc *train split*
 calibration_seed: 0
 latency: {warmup: 50, iters: 500, threads: 4}
 app: {unsure_threshold: 0.5, top_k: 3}
+max_int8_val_drop: 0.03   # if the best INT8 variant loses more PlantDoc-val accuracy than this, the demo serves FP32
+# INT8 variants tried; the one with the best PlantDoc-VAL accuracy is shipped (ties -> faster).
+# ops: all = every op ONNX Runtime can quantize; conv = only Conv/Gemm/MatMul (SiLU, squeeze-excite stay float).
+quant_variants:
+  - {name: minmax_all,      method: MinMax,     ops: all}
+  - {name: percentile_all,  method: Percentile, ops: all}
+  - {name: entropy_all,     method: Entropy,    ops: all}
+  - {name: minmax_conv,     method: MinMax,     ops: conv}
+  - {name: percentile_conv, method: Percentile, ops: conv}
+  - {name: entropy_conv,    method: Entropy,    ops: conv}
