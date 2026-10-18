@@ -283,7 +283,7 @@ def run(cfg) -> None:
         logger.finish()
         steps_log(f"saved best.pt, metrics.json, train_log.json in {out_dir}")
         steps_log.done("finished")
-    if world > 1:
+    if dist.is_initialized():  # also under torchrun with a single process
         dist.destroy_process_group()
 
 

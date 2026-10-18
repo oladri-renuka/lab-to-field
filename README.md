@@ -112,7 +112,7 @@ Results are in `reports/results.md` ("Compute experiments"), produced by `make c
 |---|---|
 | FP32 vs AMP (bf16), ResNet-50 and ViT-S | images/s, peak GPU memory, PlantDoc acc |
 | Gradient checkpointing, ViT-S | memory saved vs. epoch time added |
-| DDP 1 / 2 / 4 GPUs | throughput, scaling efficiency = thr_N / (N · thr_1), accuracy with linear lr scaling |
+| DDP 1 / 2 / 4 GPUs | throughput, scaling efficiency = thr_N / (N · thr_1), accuracy with linear lr scaling. On RunPod 4×A40 pods NCCL peer-to-peer hangs at the first collective; `scripts/compute_experiments.sh` sets `NCCL_P2P_DISABLE=1` for DDP. The 1-GPU DDP run reproduces the sweep's E0 run on a different pod to 4 decimals. |
 | `torch.profiler`, 1 epoch | top-5 ops (`profile_top5.txt`), fraction of step time spent waiting on the data loader |
 
 ## Deployment

@@ -27,7 +27,11 @@ if [ "$ONLY" = "single" ]; then
 fi
 
 if [ "$ONLY" = "ddp" ]; then
+  # On RunPod's multi-A40 pods NCCL peer-to-peer hangs at the first collective (100% GPU util, no progress);
+  # routing through host memory fixes it. Override with NCCL_P2P_DISABLE=0 on hardware with working P2P/NVLink.
+  export NCCL_P2P_DISABLE=${NCCL_P2P_DISABLE:-1}
   NGPU=$(nvidia-smi -L | wc -l)
+  echo "[ddp] NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE"
   echo "[ddp] $NGPU GPU(s) visible"
   for n in 1 2 4; do
     [ "$n" -le "$NGPU" ] || { echo "[ddp] skipping world size $n (only $NGPU GPUs)"; continue; }
