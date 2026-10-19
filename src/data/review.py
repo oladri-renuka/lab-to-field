@@ -1,7 +1,7 @@
 """Fill reports/audit/test_label_review.csv from a short list of WRONG tiles (everything else = correct).
 
     python -m src.data.review "Apple___Apple_scab:3" "Tomato___Early_blight:5=Tomato___Late_blight" ...
-    python -m src.data.review --file wrong.txt        # one entry per line, same format
+    python -m src.data.review --file reports/audit/test_labels_marked_wrong.txt   # one entry per line, same format
     python -m src.data.review --show                  # print what is recorded
 
 Entry format: <class as on the sheet title>:<tile number>[=<correct class>]. Leave out "=..." if the image fits no

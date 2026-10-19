@@ -58,7 +58,8 @@ demo = gr.Interface(
     description=(f"EfficientNet-B0 ({predictor.meta.get('app_model', 'model_int8.onnx').replace('model_', '').replace('.onnx', '').upper()} "
                  f"ONNX, CPU), checkpoint `{predictor.meta.get('source_checkpoint', '?')}`, chosen by accuracy on PlantDoc field "
                  f"validation photos. Covers {len(predictor.meta['classes'])} crop/disease classes shared by PlantVillage and "
-                 "PlantDoc; anything else is forced into one of them. Below 50% confidence it answers 'unsure'. "
+                 "PlantDoc; anything else is forced into one of them. Expect about 54% top-1 accuracy on field photos "
+                 "(PlantDoc test), so wrong or 'unsure' answers are normal. Below 50% confidence it answers 'unsure'. "
                  "Research demo, not a substitute for an agronomist."),
     flagging_mode="never",
 )

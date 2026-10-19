@@ -5,8 +5,8 @@
 > **Result:** classifiers trained on lab photos (PlantVillage, 99% accuracy) reach only **24–38% on field photos**
 > (PlantDoc, 27 shared classes, 3 seeds). **Generative augmentation recovers little of that gap**: CycleGAN 10–16% of
 > the achievable gain for CNNs, a conditional VAE ≤ 7%, neither significant after Holm correction. **Ten real field
-> photos per class recover 45–78%**, significant for every model. ViT's apparent robustness comes from ImageNet-21k
-> pretraining, not from attention. **Demo:** https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo
+> photos per class recover 45–78%**, significant for every model. No evidence that attention adds robustness beyond
+> pretraining: ViT's lead comes with ImageNet-21k pretraining. **Demo:** https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo
 
 ![PlantDoc accuracy per experiment](reports/figures/pd_acc.png)
 
@@ -66,13 +66,14 @@ comparisons; `reports/paired_tests.csv`):
 2. **Ten real field photos per class beat every synthetic method, for every model** (E5 k=10 vs E2, E3, E4: all
    Holm p < 1e-4); even five per class beat every synthetic method on mean accuracy, and are significant vs E0 for every
    model. With 25 per class, EfficientNet matches training on all ~1.9k field images.
-3. **Background compositing helps the model that leans on the background most**: EfficientNet-B0 +9.0 points
-   (95% CI +4.5 to +13.7, Holm p < 1e-4), also over strong augmentation (+8.8, p = 0.048). ResNet-50 +5.6 and
-   ViT-S (IN-1k) +6.9 are suggestive but not significant after correction; ViT-S (IN-21k) gains nothing.
+3. **Background compositing gives EfficientNet-B0 the largest gain**: +9.0 points (95% CI +4.5 to +13.7, Holm
+   p < 1e-4), also over strong augmentation (+8.8, p = 0.048). ResNet-50 (+5.6) and ViT-S (IN-1k) (+6.9) gain less
+   and are not significant after correction; ViT-S (IN-21k) gains nothing.
 4. **Standard augmentation (E1) is a null for every model.**
-5. **ViT is more robust only because of its pretraining.** ViT-S (IN-21k) beats ResNet-50 by +9.2 lab-only (Holm
-   p < 1e-4), but the same ViT-S pretrained on ImageNet-1k is level with the CNNs (−2.7 vs ResNet, +2.3 vs
-   EfficientNet, both p = 1.0), and 21k vs 1k is +11.9 (p < 1e-4). The ~1.9k-image secondary field pool agrees
+5. **No evidence that attention adds robustness beyond pretraining.** ViT-S (IN-21k) beats ResNet-50 by +9.2
+   lab-only (Holm p < 1e-4), but the same ViT-S pretrained on ImageNet-1k is level with the CNNs within the test
+   set's ~5-point resolution (−2.7 vs ResNet, +2.3 vs EfficientNet, both p = 1.0), while 21k vs 1k pretraining is
+   worth +11.9 (p < 1e-4). Smaller architecture effects cannot be ruled out. The ~1.9k-image secondary field pool agrees
    (21k 30.3%, 1k 20.1%, ResNet 23.8%, EfficientNet 17.4%).
 6. **Combining compositing with few-shot (E6) adds nothing significant** over few-shot alone (+3.1, +4.2, −3.3 points).
 
@@ -120,9 +121,10 @@ predicts the PlantVillage class far above the majority-class baseline of 15.6% (
 
 ![Background-only inputs](reports/figures/shortcut_hull_examples.png)
 
-Every architecture *can* read the label from the background. How much a lab-trained model *relies* on it shows up as
-the E2 − E0 gain, which is largest for EfficientNet and absent for the 21k-pretrained ViT. Exploitability and reliance
-are different things: ViT-S (IN-21k) exploits backgrounds best here yet gains nothing from removing them.
+Every architecture *can* read the label from the background. Whether that hurts in the field is a separate question:
+randomising backgrounds during training (E2 − E0) gives EfficientNet +9.0 points and the 21k-pretrained ViT nothing.
+Exploitability and reliance are different things: ViT-S (IN-21k) exploits backgrounds best here yet gains nothing from
+removing them.
 
 ## Failure analysis (`reports/failure_analysis.md`)
 
@@ -181,20 +183,26 @@ calibration on PlantDoc-train images) was tried in 7 variants, **chosen on Plant
 | Percentile, Conv/Gemm/MatMul only (SiLU + squeeze-excite in FP32) | 44.7% |
 | **Percentile, conv only, 16 depthwise convs kept in FP32** | **53.3%** |
 
-**INT8 is a negative result for EfficientNet-B0 here.** Naive static quantization destroys accuracy (62 → 16% on
+**INT8 is a negative result for EfficientNet-B0 here.** Naive static quantization destroys accuracy (61.1 → 15.9% on
 val); outlier-robust calibration and keeping SiLU, squeeze-excite and depthwise convolutions in float recover most of
-it, but the best variant still loses 7.7 points on val (2.5 on test), and the mixed INT8/FP32 graph is *slower* than
+it, but the best variant still loses 7.7 points on val (61.08 → 53.33; 2.5 on test), and the mixed INT8/FP32 graph is *slower* than
 FP32 on this CPU because of the conversions at every float/int boundary. Its one win is a 3.1× smaller file. The
 export therefore serves FP32 automatically (rule: INT8 only if it loses ≤ 3 points of PlantDoc-val accuracy); FP32
 already runs at 5 ms per image on 4 CPU threads. A quantization-friendly architecture (EfficientNet-Lite: ReLU6, no
 squeeze-excite) or quantization-aware training is the next step for a phone build.
 
-The ONNX FP32 model scores 61.1% on val vs 62.4% for the PyTorch checkpoint: the serving code resizes with PIL bilinear
-instead of torchvision's resize.
+The ONNX FP32 model scores 61.1% on val vs 62.4% logged for the same checkpoint during training (6 of 465 images).
+This is not a preprocessing skew: training and serving both load images with the same EXIF-aware loader and resize
+with PIL bilinear (torchvision's `Resize` calls PIL's own resize on PIL images), which `tests/test_serve_parity.py`
+checks. The likely cause is numeric: the training number was computed under bf16 autocast on the GPU and the ONNX one in
+FP32 on the CPU, which can flip borderline images (not re-measured in FP32 PyTorch). Every PlantDoc number in this
+README for the served model is the FP32 ONNX one.
 
-**Live demo: https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo** (Gradio on a free ZeroGPU Space,
-inference on CPU; packaged by `scripts/make_space.sh`): top-3 diseases with confidence, a Grad-CAM overlay, and
-**"unsure"** below 0.5 confidence. A non-leaf test image is answered "unsure" (top confidence 16%). A FastAPI service
+**Live demo: https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo** (Gradio on a free Hugging Face
+Space. The free tier only offers ZeroGPU hardware for Gradio, which requires one `@spaces.GPU` function, but both
+the ONNX classifier and Grad-CAM run on the Space's CPU; packaged by `scripts/make_space.sh`): top-3 diseases with confidence, a Grad-CAM overlay, and
+**"unsure"** below 0.5 confidence. Expect about 54% top-1 accuracy on
+field photos (PlantDoc test), so wrong or "unsure" answers are normal, not a bug. A non-leaf test image is answered "unsure" (top confidence 16%). A FastAPI service
 with a Dockerfile is in `serve/`.
 
 [![Demo: top-3 prediction with Grad-CAM overlay](reports/figures/demo.jpeg)](https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo)
