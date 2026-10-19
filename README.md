@@ -194,9 +194,9 @@ squeeze-excite) or quantization-aware training is the next step for a phone buil
 The ONNX FP32 model scores 61.1% on val vs 62.4% logged for the same checkpoint during training (6 of 465 images).
 This is not a preprocessing skew: training and serving both load images with the same EXIF-aware loader and resize
 with PIL bilinear (torchvision's `Resize` calls PIL's own resize on PIL images), which `tests/test_serve_parity.py`
-checks. The likely cause is numeric: the training number was computed under bf16 autocast on the GPU and the ONNX one in
-FP32 on the CPU, which can flip borderline images (not re-measured in FP32 PyTorch). Every PlantDoc number in this
-README for the served model is the FP32 ONNX one.
+checks. The cause is numeric precision: the training number was computed under bf16 autocast. Re-evaluating the PyTorch
+checkpoint gives 61.1% in FP32 and 62.4% in bf16, so the FP32 ONNX export matches FP32 PyTorch exactly. Every PlantDoc
+number in this README for the served model is the FP32 one.
 
 **Live demo: https://huggingface.co/spaces/oladri-Renuka/crop-disease-demo** (Gradio on a free Hugging Face
 Space. The free tier only offers ZeroGPU hardware for Gradio, which requires one `@spaces.GPU` function, but both
